@@ -905,6 +905,46 @@
       });
     }
 
+   function getNormalizedSessions(a) {
+      if (Array.isArray(a.sessions) && a.sessions.length > 0) {
+        return a.sessions;
+      }
+      const entryT = a.entryTime || a.time || "";
+      if (!entryT) return [];
+      return [{
+        sessionNum: 1,
+        entryTime: entryT,
+        exitTime: a.exitTime || "",
+        duration: a.duration || "",
+        status: a.status || (a.exitTime ? "OUT" : "IN")
+      }];
+    }
+
+    document.getElementById("export-att-btn").onclick = () => {
+      if (!currentDayAttendance.length) return alert("No attendance records for this date.");
+      downloadCSV(
+        `attendance-${attDateInput.value}.csv`,
+        [
+          "Date", "Name", "Mobile",
+          "S1 Entry", "S1 Exit", "S1 Duration", "S1 Status",
+          "S2 Entry", "S2 Exit", "S2 Duration", "S2 Status",
+          "Fee Status", "Method"
+        ],
+        currentDayAttendance.map(a => {
+          const sess = getNormalizedSessions(a);
+          const s1 = sess[0] || {};
+          const s2 = sess[1] || {};
+          const method = a.tokenUsed === "MANUAL" ? "Manual" : "QR";
+          return [
+            a.date, a.name, a.phone,
+            s1.entryTime || "", s1.exitTime || "", s1.duration || "", s1.status || "",
+            s2.entryTime || "", s2.exitTime || "", s2.duration || "", s2.status || "",
+            a.feeStatus, method
+          ];
+        })
+      );
+    };
+
     function listenAttendance(dateStr) {
       if (unsubAtt) unsubAtt();
       const q = query(collection(db, "attendance"), where("date", "==", dateStr));
@@ -918,26 +958,37 @@
           return;
         }
         currentDayAttendance.forEach(a => {
-          const entryT = a.entryTime || a.time || "—";
-          const sessionStatus = a.status || (a.exitTime ? "OUT" : "IN");
-          const exitT = a.exitTime || (sessionStatus === "IN" ? "Still inside" : "—");
-          const sessionBadge = sessionStatus === "AUTO_CLOSED"
-            ? `<span class="badge soon">AUTO_CLOSED</span> `
-            : (sessionStatus === "OUT" ? `<span class="badge active">OUT</span> ` : `<span class="badge active">IN</span> `);
+          const sess = getNormalizedSessions(a);
           const feeBadgeClass = a.feeStatus === "EXPIRED" ? "expired" : (a.feeStatus === "DUE_SOON" ? "soon" : "active");
+
+          const entryHtml = sess.map(s =>
+            `<div><b>S${s.sessionNum}:</b> ${s.entryTime || "—"}</div>`
+          ).join("");
+
+          const exitHtml = sess.map(s => {
+            const st = s.status || (s.exitTime ? "OUT" : "IN");
+            const exitLabel = s.exitTime || (st === "IN" ? "Still inside" : "—");
+            const durLabel = s.duration ? ` <span style="color:#64748b; font-size:0.78rem;">(${s.duration})</span>` : "";
+            return `<div><b>S${s.sessionNum}:</b> ${exitLabel}${durLabel}</div>`;
+          }).join("");
+
+          const statusHtml = sess.map(s => {
+            const st = s.status || (s.exitTime ? "OUT" : "IN");
+            const cls = st === "AUTO_CLOSED" ? "soon" : "active";
+            return `<span class="badge ${cls}">S${s.sessionNum}: ${st}</span>`;
+          }).join(" ");
 
           tbody.innerHTML += `
             <tr>
-              <td><b>${entryT}</b></td>
-              <td>${exitT}${a.duration ? ` <span style="color:#64748b; font-size:0.78rem;">(${a.duration})</span>` : ""}</td>
+              <td>${entryHtml || "—"}</td>
+              <td>${exitHtml || "—"}</td>
               <td><b>${a.name}</b><br><span style="color:#64748b; font-size:0.78rem;">${a.phone}</span></td>
-              <td>${sessionBadge}<span class="badge ${feeBadgeClass}">${a.feeStatus}</span></td>
+              <td><div style="display:flex; gap:4px; flex-wrap:wrap; margin-bottom:4px;">${statusHtml}</div><span class="badge ${feeBadgeClass}">${a.feeStatus}</span></td>
             </tr>
           `;
         });
       });
     }
-
     revMonthInput.onchange = () => { if (revMonthInput.value) listenMonthlyRevenue(revMonthInput.value); };
     attDateInput.onchange = () => { if (attDateInput.value) listenAttendance(attDateInput.value); };
 
