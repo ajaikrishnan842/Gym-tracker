@@ -25,6 +25,7 @@
     #timer { font-size: 1.05rem; font-weight: 600; color: #cbd5e1; }
     #overlay { display: none; padding: 28px 16px; border-radius: 16px; margin-bottom: 12px; }
     .ok { background: #14532d; border: 2px solid #22c55e; }
+    .out { background: #1e3a8a; border: 2px solid #60a5fa; }
     .soon { background: #713f12; border: 2px solid #eab308; }
     .warn { background: #7f1d1d; border: 2px solid #ef4444; }
     .footer-links { margin-top: 22px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; justify-content: center; }
@@ -91,8 +92,13 @@
     import { doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-firestore.js";
     import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-auth.js";
 
-    // CHANGE THIS TO YOUR OWN 4-DIGIT ADMIN PIN
-    const ADMIN_PIN = "9842";
+    const DEFAULT_PIN = "9842";
+    const PIN_STORAGE_KEY = "fp_admin_custom_pin";
+
+    function getActiveAdminPin() {
+      const saved = localStorage.getItem(PIN_STORAGE_KEY);
+      return saved && /^\d{4}$/.test(saved) ? saved : DEFAULT_PIN;
+    }
 
     const DURATION = 30;
     const currentTokenRef = doc(db, "qr_tokens", "current");
@@ -139,7 +145,7 @@
         pinErr.textContent = "Enter a 4-digit PIN.";
         return;
       }
-      if (entered !== ADMIN_PIN) {
+      if (entered !== getActiveAdminPin()) {
         pinErr.textContent = "Incorrect PIN.";
         pinInput.value = "";
         pinInput.focus();
@@ -186,9 +192,14 @@
       osc.stop(audioCtx.currentTime + startOffset + duration);
     }
 
-    function playCheckInSound(feeStatus) {
+    function playCheckInSound(feeStatus, actionType) {
       if (!soundEnabled) return;
       unlockAudio();
+      if (actionType === "EXIT") {
+        beep(784, 0.14, 0, "sine", 0.22);
+        beep(587, 0.20, 0.15, "sine", 0.22);
+        return;
+      }
       if (feeStatus === "EXPIRED") {
         beep(220, 0.22, 0, "sawtooth", 0.2);
         beep(180, 0.30, 0.28, "sawtooth", 0.2);
@@ -247,20 +258,34 @@
     }
 
     function showWelcome(data) {
-      playCheckInSound(data.feeStatus);
+      playCheckInSound(data.feeStatus, data.actionType);
       qrSection.style.display = "none";
       overlay.style.display = "block";
 
-      let cls = "ok", title = "✅ Checked In!", msg = `Valid until ${data.validUntil}`;
+      if (data.actionType === "EXIT") {
+        overlay.className = "out";
+        const sessionLabel = data.sessionNum ? `Session ${data.sessionNum} • ` : "";
+        const durLine = data.duration ? `<br>Duration: ${data.duration}` : "";
+        overlay.innerHTML = `
+          <h2 style="margin:0 0 8px;">Check Out (${data.scanTime || ""})</h2>
+          <div style="font-size:1.3rem; font-weight:700;">${data.usedBy}</div>
+          <p style="margin:8px 0 0; font-size:0.9rem; opacity:0.95;">${sessionLabel}Exit marked${durLine}</p>
+        `;
+        setTimeout(generateNewQR, 2500);
+        return;
+      }
+
+      const sessionLabel = data.sessionNum ? `Session ${data.sessionNum} • ` : "";
+      let cls = "ok", title = `✅ Checked In (${data.scanTime || ""})`, msg = `${sessionLabel}Valid until ${data.validUntil}`;
       if (data.feeStatus === "EXPIRED") {
         cls = "warn";
         title = "⚠️ Fee Overdue";
-        msg = `Expired on ${data.validUntil}. Please renew at desk.`;
+        msg = `${sessionLabel}Expired on ${data.validUntil}. Please renew at desk.`;
       } else if (data.feeStatus === "DUE_SOON") {
         cls = "soon";
         title = "⏳ Fee Due Soon";
         const d = data.daysLeft;
-        msg = d === 0 ? `Expires today (${data.validUntil}). Please renew at desk.` : `Expires in ${d} day${d === 1 ? "" : "s"} (${data.validUntil}).`;
+        msg = sessionLabel + (d === 0 ? `Expires today (${data.validUntil}). Please renew at desk.` : `Expires in ${d} day${d === 1 ? "" : "s"} (${data.validUntil}).`);
       }
 
       overlay.className = cls;
