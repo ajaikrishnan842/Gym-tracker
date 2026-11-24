@@ -7,7 +7,7 @@
   <style>
     * { box-sizing: border-box; font-family: system-ui, -apple-system, sans-serif; }
     body { margin: 0; background: #f1f5f9; color: #0f172a; display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
-    .box { background: #fff; padding: 28px; border-radius: 16px; width: 100%; max-width: 380px; box-shadow: 0 10px 25px rgba(0,0,0,0.08); text-align: center; }
+    .box { background: #fff; padding: 28px; border-radius: 16px; width: 100%; max-width: 390px; box-shadow: 0 10px 25px rgba(0,0,0,0.08); text-align: center; }
     .gym-logo { width: 72px; height: 72px; object-fit: cover; border-radius: 14px; margin-bottom: 10px; }
     .gym-meta { margin: 0 0 16px; color: #64748b; font-size: 0.85rem; }
     input { width: 100%; padding: 14px; font-size: 1.1rem; border: 1.5px solid #cbd5e1; border-radius: 10px; margin: 12px 0; text-align: center; }
@@ -18,6 +18,12 @@
     .soon { background: #fef9c3; color: #854d0e; border: 1.5px solid #eab308; }
     .warning { background: #fef2f2; color: #991b1b; border: 1.5px solid #ef4444; }
     .error { background: #fee2e2; color: #991b1b; }
+    .self-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px; margin-top: 12px; text-align: left; }
+    .self-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .self-stat { background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; }
+    .self-lbl { font-size: 0.72rem; font-weight: 700; color: #64748b; text-transform: uppercase; }
+    .self-val { font-size: 1.1rem; font-weight: 700; color: #0f172a; margin-top: 2px; }
+    .wa-help { display: block; margin-top: 10px; background: #25D366; color: #fff; text-align: center; text-decoration: none; padding: 10px 12px; border-radius: 10px; font-weight: 600; font-size: 0.9rem; }
     .link-btn { background: none; color: #64748b; font-size: 0.85rem; margin-top: 12px; text-decoration: underline; }
   </style>
 </head>
@@ -32,6 +38,7 @@
       <button id="submit-btn">Mark Entry / Exit</button>
     </div>
     <div id="result"></div>
+    <div id="self-status"></div>
     <button id="reset-phone" class="link-btn" style="display:none;">Not your number? Change mobile</button>
   </div>
 
@@ -39,16 +46,72 @@
     import { db, getTodayIST } from "./firebase-config.js";
     import { doc, runTransaction, collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-firestore.js";
 
+    const GYM_WHATSAPP = "918606178119";
     const MAX_DAILY_SESSIONS = 2;
     const params = new URLSearchParams(window.location.search);
     const token = params.get("t");
     const formArea = document.getElementById("form-area");
     const resultEl = document.getElementById("result");
+    const selfStatusEl = document.getElementById("self-status");
     const phoneInput = document.getElementById("phone");
     const resetBtn = document.getElementById("reset-phone");
 
     function showMsg(type, html) {
       resultEl.innerHTML = `<div class="status ${type}">${html}</div>`;
+    }
+
+    async function getMonthlyWorkoutCount(phone, monthPrefix) {
+      try {
+        const q = query(
+          collection(db, "attendance"),
+          where("phone", "==", phone),
+          where("date", ">=", `${monthPrefix}-01`),
+          where("date", "<=", `${monthPrefix}-31`)
+        );
+        const snap = await getDocs(q);
+        return snap.size;
+      } catch {
+        return null;
+      }
+    }
+
+    function renderSelfStatusCard(res, monthlyCount) {
+      const daysDisplay = res.daysLeft < 0
+        ? `Overdue (${Math.abs(res.daysLeft)}d)`
+        : `${res.daysLeft} day${res.daysLeft === 1 ? "" : "s"}`;
+
+      const workoutsDisplay = monthlyCount !== null ? `${monthlyCount} day${monthlyCount === 1 ? "" : "s"}` : "—";
+      const planLabel = res.planName ? `${res.planName} • ` : "";
+
+      let waButtonHtml = "";
+      if (res.feeStatus === "EXPIRED" || res.feeStatus === "DUE_SOON") {
+        const reason = res.feeStatus === "EXPIRED"
+          ? `my gym fee expired on ${res.validUntil}`
+          : `my gym fee is due on ${res.validUntil}`;
+        const msg = encodeURIComponent(
+          `Hi Fitness Planet Gym (Periye), I am ${res.name} (${phoneInput.value.trim() || ""}). ${reason} — sharing renewal details.`
+        );
+        waButtonHtml = `<a class="wa-help" target="_blank" href="https://wa.me/${GYM_WHATSAPP}?text=${msg}">💬 Message Reception on WhatsApp</a>`;
+      }
+
+      selfStatusEl.innerHTML = `
+        <div class="self-card">
+          <div style="font-size:0.78rem; font-weight:700; color:#475569; margin-bottom:8px;">
+            ${planLabel}Valid until <b>${res.validUntil}</b>
+          </div>
+          <div class="self-grid">
+            <div class="self-stat">
+              <div class="self-lbl">Remaining</div>
+              <div class="self-val">${daysDisplay}</div>
+            </div>
+            <div class="self-stat">
+              <div class="self-lbl">This Month</div>
+              <div class="self-val">${workoutsDisplay}</div>
+            </div>
+          </div>
+          ${waButtonHtml}
+        </div>
+      `;
     }
 
     function formatDuration(startMs, endMs) {
@@ -100,6 +163,7 @@
       if (!/^\d{10}$/.test(phone)) return showMsg("error", "Please enter a valid 10-digit mobile number.");
 
       formArea.style.display = "none";
+      selfStatusEl.innerHTML = "";
       showMsg("", "Verifying QR...");
 
       const nowMs = Date.now();
@@ -169,7 +233,6 @@
           const existingSessions = todayAttSnap.exists() ? normalizeSessions(todayAttSnap.data()) : [];
           const openIdx = existingSessions.findIndex(s => s.status === "IN" && !s.exitTime);
 
-          // Case A: Currently inside an open session -> mark EXIT for that session
           if (openIdx !== -1) {
             const openSess = existingSessions[openIdx];
             const duration = formatDuration(openSess.entryAt || nowMs, nowMs);
@@ -217,6 +280,7 @@
               mode: "EXIT",
               sessionNum: closedSess.sessionNum,
               name: member.name,
+              planName: member.planName || "",
               entryTime: closedSess.entryTime,
               exitTime: istTime,
               duration,
@@ -227,12 +291,10 @@
             };
           }
 
-          // Case B: No open session -> check if daily session limit (2) is reached
           if (existingSessions.length >= MAX_DAILY_SESSIONS) {
             throw new Error(`Maximum ${MAX_DAILY_SESSIONS} entry/exit sessions per day already completed.`);
           }
 
-          // Case C: Start a new ENTRY session (Session 1 or Session 2)
           const sessionNum = existingSessions.length + 1;
           const newSess = {
             sessionNum,
@@ -276,6 +338,7 @@
             mode: "ENTRY",
             sessionNum,
             name: member.name,
+            planName: member.planName || "",
             entryTime: istTime,
             validUntil: member.validUntil,
             feeStatus,
@@ -294,18 +357,20 @@
         if (res.mode === "EXIT") {
           const durText = res.duration ? `<br>Duration: <b>${res.duration}</b>` : "";
           showMsg("out", `👋 Check Out — <b>${res.name}</b> (Session ${res.sessionNum})<br><br>Entry: <b>${res.entryTime || "—"}</b> • Exit: <b>${res.exitTime}</b>${durText}${autoNote}`);
-          return;
+        } else {
+          const sessTag = `Session ${res.sessionNum} of ${MAX_DAILY_SESSIONS}`;
+          if (res.feeStatus === "EXPIRED") {
+            showMsg("warning", `✅ Entry Marked for <b>${res.name}</b> (${sessTag}) at <b>${res.entryTime}</b>${autoNote}<br><br>⚠️ <b>Fee Expired on ${res.validUntil}</b>.<br>Please renew your membership at reception.`);
+          } else if (res.feeStatus === "DUE_SOON") {
+            const dueText = res.daysLeft === 0 ? "expires <b>today</b>" : `expires in <b>${res.daysLeft} day${res.daysLeft === 1 ? "" : "s"}</b>`;
+            showMsg("soon", `✅ Welcome, <b>${res.name}</b>! (${sessTag} • Entry: <b>${res.entryTime}</b>)${autoNote}<br><br>⏳ Reminder: Your plan ${dueText} (<b>${res.validUntil}</b>).<br>Please renew soon at reception.`);
+          } else {
+            showMsg("success", `✅ Welcome, <b>${res.name}</b>! (${sessTag} • Entry: <b>${res.entryTime}</b>)${autoNote}<br><br>Plan valid until: <b>${res.validUntil}</b>`);
+          }
         }
 
-        const sessTag = `Session ${res.sessionNum} of ${MAX_DAILY_SESSIONS}`;
-        if (res.feeStatus === "EXPIRED") {
-          showMsg("warning", `✅ Entry Marked for <b>${res.name}</b> (${sessTag}) at <b>${res.entryTime}</b>${autoNote}<br><br>⚠️ <b>Fee Expired on ${res.validUntil}</b>.<br>Please renew your membership at reception.`);
-        } else if (res.feeStatus === "DUE_SOON") {
-          const dueText = res.daysLeft === 0 ? "expires <b>today</b>" : `expires in <b>${res.daysLeft} day${res.daysLeft === 1 ? "" : "s"}</b>`;
-          showMsg("soon", `✅ Welcome, <b>${res.name}</b>! (${sessTag} • Entry: <b>${res.entryTime}</b>)${autoNote}<br><br>⏳ Reminder: Your plan ${dueText} (<b>${res.validUntil}</b>).<br>Please renew soon at reception.`);
-        } else {
-          showMsg("success", `✅ Welcome, <b>${res.name}</b>! (${sessTag} • Entry: <b>${res.entryTime}</b>)${autoNote}<br><br>Plan valid until: <b>${res.validUntil}</b>`);
-        }
+        const monthlyCount = await getMonthlyWorkoutCount(phone, today.slice(0, 7));
+        renderSelfStatusCard(res, monthlyCount);
       } catch (err) {
         formArea.style.display = "block";
         showMsg("error", `❌ ${err.message}`);
