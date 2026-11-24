@@ -39,6 +39,7 @@
     .actions button, .actions a { padding: 5px 9px; font-size: 0.8rem; border-radius: 6px; text-decoration: none; }
     .wa { background: #25D366; color: #fff; font-weight: 600; }
     .toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; justify-content: space-between; }
+    .check-inline { display: flex; align-items: center; gap: 6px; font-size: 0.88rem; font-weight: 500; color: #334155; padding: 0 4px; }
     #login-err { color: #dc2626; font-size: 0.85rem; margin-top: 10px; min-height: 18px; }
     .modal-bg { display: none; position: fixed; inset: 0; background: rgba(15,23,42,0.6); align-items: center; justify-content: center; padding: 16px; z-index: 50; }
     .modal { background: #fff; padding: 24px; border-radius: 16px; width: 100%; max-width: 420px; max-height: 90vh; overflow-y: auto; }
@@ -103,6 +104,26 @@
       </div>
     </div>
 
+    <!-- Manage Gym Plans -->
+    <div class="card">
+      <h3>Manage Membership Plans</h3>
+      <div class="grid">
+        <input id="p-name" placeholder="Plan Name (e.g. 6 Months / Trial)" />
+        <input id="p-days" type="number" min="1" placeholder="Duration (Days)" />
+        <input id="p-fee" type="number" min="0" placeholder="Default Fee (₹)" />
+        <label class="check-inline">
+          <input id="p-student" type="checkbox" /> Student Plan
+        </label>
+        <button id="add-plan-btn">Add Plan</button>
+      </div>
+      <div style="overflow-x:auto;">
+        <table>
+          <thead><tr><th>Plan Name</th><th>Days</th><th>Default Fee</th><th>Type</th><th>Actions</th></tr></thead>
+          <tbody id="plan-list"></tbody>
+        </table>
+      </div>
+    </div>
+
     <!-- Add New Member -->
     <div class="card">
       <h3>Add New Member</h3>
@@ -164,15 +185,26 @@
     </div>
   </div>
 
-  <!-- Record Payment Modal -->
+  <!-- Record Payment Modal (Includes Custom Plan Option) -->
   <div id="pay-modal" class="modal-bg">
     <div class="modal">
       <h3 style="margin-bottom:4px;">Record Fee Payment</h3>
       <p id="pay-member-info" style="margin:0 0 14px; color:#475569; font-size:0.9rem;"></p>
 
       <div class="field">
-        <label>Membership Plan (Auto-selected)</label>
+        <label>Membership Plan</label>
         <select id="pay-plan"></select>
+      </div>
+
+      <div id="custom-plan-box" style="display:none; background:#f8fafc; border:1px solid #cbd5e1; padding:12px; border-radius:10px; margin-bottom:12px;">
+        <div class="field" style="margin-bottom:8px;">
+          <label>Custom Plan Label (Optional)</label>
+          <input id="custom-label" placeholder="e.g. 15 Days / Special Offer" />
+        </div>
+        <div class="field" style="margin-bottom:0;">
+          <label>Custom Duration (Days)</label>
+          <input id="custom-days" type="number" min="1" value="15" />
+        </div>
       </div>
 
       <div id="expiry-preview" class="preview-box"></div>
@@ -255,16 +287,15 @@
 
   <script type="module">
     import { db, auth, getTodayIST } from "./firebase-config.js";
-    import { doc, setDoc, updateDoc, deleteDoc, addDoc, collection, onSnapshot, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-firestore.js";
+    import { doc, setDoc, updateDoc, deleteDoc, addDoc, collection, getDocs, onSnapshot, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-firestore.js";
     import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-auth.js";
 
-    // EDIT YOUR GYM'S PLAN PRICES HERE
-    const PLANS = {
-      reg_1m: { name: "1 Month", days: 30, fee: 1000, isStudent: false },
-      reg_3m: { name: "3 Months", days: 90, fee: 2700, isStudent: false },
-      stu_1m: { name: "Student - 1 Month", days: 30, fee: 700, isStudent: true },
-      stu_3m: { name: "Student - 3 Months", days: 90, fee: 1800, isStudent: true }
-    };
+    const DEFAULT_PLANS = [
+      { id: "reg_1m", name: "1 Month", days: 30, fee: 1000, isStudent: false },
+      { id: "reg_3m", name: "3 Months", days: 90, fee: 2700, isStudent: false },
+      { id: "stu_1m", name: "Student - 1 Month", days: 30, fee: 700, isStudent: true },
+      { id: "stu_3m", name: "Student - 3 Months", days: 90, fee: 1800, isStudent: true }
+    ];
 
     const lockScreen = document.getElementById("lock-screen");
     const dashboard = document.getElementById("dashboard");
@@ -273,6 +304,9 @@
     const mFee = document.getElementById("m-fee");
     const payModal = document.getElementById("pay-modal");
     const payPlan = document.getElementById("pay-plan");
+    const customPlanBox = document.getElementById("custom-plan-box");
+    const customLabelInput = document.getElementById("custom-label");
+    const customDaysInput = document.getElementById("custom-days");
     const payAmount = document.getElementById("pay-amount");
     const payMode = document.getElementById("pay-mode");
     const txnField = document.getElementById("txn-field");
@@ -284,16 +318,8 @@
     const revMonthInput = document.getElementById("rev-month");
     const attDateInput = document.getElementById("att-date");
 
-    const optionsHtml = Object.entries(PLANS)
-      .map(([id, p]) => `<option value="${id}">${p.name} (₹${p.fee} / ${p.days}d)</option>`)
-      .join("");
-    mPlan.innerHTML = optionsHtml;
-    payPlan.innerHTML = optionsHtml;
-    editPlan.innerHTML = optionsHtml;
-    mFee.value = PLANS[mPlan.value].fee;
-    mPlan.onchange = () => { mFee.value = PLANS[mPlan.value].fee; };
-
-    let unsubMembers = null, unsubAtt = null, unsubPayments = null, unsubRev = null;
+    let unsubMembers = null, unsubAtt = null, unsubPayments = null, unsubRev = null, unsubPlans = null;
+    let allPlans = [...DEFAULT_PLANS];
     let allMembers = [];
     let currentMonthPayments = [];
     let currentDayAttendance = [];
@@ -302,6 +328,86 @@
     let editingMember = null;
     let compressedPhotoBase64 = "";
 
+    function getPlanById(id) {
+      return allPlans.find(p => p.id === id) || allPlans[0] || DEFAULT_PLANS[0];
+    }
+
+    function refreshPlanDropdowns() {
+      const prevM = mPlan.value;
+      const prevEdit = editPlan.value;
+
+      const memberOptions = allPlans
+        .map(p => `<option value="${p.id}">${p.name} (₹${p.fee} / ${p.days}d)</option>`)
+        .join("");
+
+      mPlan.innerHTML = memberOptions;
+      editPlan.innerHTML = memberOptions;
+      payPlan.innerHTML = memberOptions + `<option value="custom">Custom Duration & Fee...</option>`;
+
+      if (prevM && allPlans.some(p => p.id === prevM)) mPlan.value = prevM;
+      if (prevEdit && allPlans.some(p => p.id === prevEdit)) editPlan.value = prevEdit;
+
+      const activeMPlan = getPlanById(mPlan.value);
+      if (activeMPlan) mFee.value = activeMPlan.fee;
+    }
+
+    mPlan.onchange = () => {
+      const p = getPlanById(mPlan.value);
+      if (p) mFee.value = p.fee;
+    };
+
+    function renderPlansTable() {
+      const tbody = document.getElementById("plan-list");
+      tbody.innerHTML = "";
+      allPlans.forEach(p => {
+        tbody.innerHTML += `
+          <tr>
+            <td><b>${p.name}</b></td>
+            <td>${p.days} days</td>
+            <td>₹${p.fee}</td>
+            <td>${p.isStudent ? `<span class="student-tag">Student</span>` : "Regular"}</td>
+            <td class="actions">
+              <button class="danger" onclick="deletePlan('${p.id}')">Remove</button>
+            </td>
+          </tr>
+        `;
+      });
+    }
+
+    document.getElementById("add-plan-btn").onclick = async () => {
+      const name = document.getElementById("p-name").value.trim();
+      const days = Number(document.getElementById("p-days").value);
+      const fee = Number(document.getElementById("p-fee").value);
+      const isStudent = document.getElementById("p-student").checked;
+
+      if (!name || !days || days < 1 || isNaN(fee) || fee < 0) {
+        return alert("Enter a valid plan name, duration in days (1 or more), and fee.");
+      }
+
+      const id = "plan_" + Date.now();
+      await setDoc(doc(db, "plans", id), { id, name, days, fee, isStudent });
+      document.getElementById("p-name").value = "";
+      document.getElementById("p-days").value = "";
+      document.getElementById("p-fee").value = "";
+      document.getElementById("p-student").checked = false;
+    };
+
+    window.deletePlan = async (id) => {
+      if (allPlans.length <= 1) return alert("Keep at least one plan in the list.");
+      if (!confirm("Remove this plan from the dropdown?")) return;
+      await deleteDoc(doc(db, "plans", id));
+    };
+
+    async function seedDefaultPlansIfEmpty() {
+      const snap = await getDocs(collection(db, "plans"));
+      if (snap.empty) {
+        for (const p of DEFAULT_PLANS) {
+          await setDoc(doc(db, "plans", p.id), p);
+        }
+      }
+    }
+
+    // CSV Download Helper
     function downloadCSV(filename, headers, rows) {
       const esc = (v) => {
         const s = String(v ?? "");
@@ -361,19 +467,38 @@
       return d.toISOString().slice(0, 10);
     }
 
+    function getActivePaymentSelection() {
+      if (payPlan.value === "custom") {
+        const days = Math.max(1, Number(customDaysInput.value) || 1);
+        const label = customLabelInput.value.trim() || `Custom (${days}d)`;
+        return { planId: "custom", name: label, days, isStudent: Boolean(selectedMember?.isStudent) };
+      }
+      const p = getPlanById(payPlan.value);
+      return { planId: p.id, name: p.name, days: p.days, isStudent: Boolean(p.isStudent) };
+    }
+
     function updateExpiryPreview() {
       if (!selectedMember) return;
-      const plan = PLANS[payPlan.value] || PLANS.reg_1m;
+      const sel = getActivePaymentSelection();
       const today = getTodayIST();
       const base = selectedMember.validUntil > today ? selectedMember.validUntil : today;
-      const nextValid = addDays(base, plan.days);
-      expiryPreview.innerHTML = `New Expiry Date: <b>${nextValid}</b> (+${plan.days} days from ${base === today ? "today" : "current expiry"})`;
+      const nextValid = addDays(base, sel.days);
+      expiryPreview.innerHTML = `New Expiry Date: <b>${nextValid}</b> (+${sel.days} days from ${base === today ? "today" : "current expiry"})`;
     }
 
     payPlan.onchange = () => {
-      payAmount.value = PLANS[payPlan.value].fee;
+      if (payPlan.value === "custom") {
+        customPlanBox.style.display = "block";
+      } else {
+        customPlanBox.style.display = "none";
+        const p = getPlanById(payPlan.value);
+        if (p) payAmount.value = p.fee;
+      }
       updateExpiryPreview();
     };
+
+    customDaysInput.oninput = updateExpiryPreview;
+    customLabelInput.oninput = updateExpiryPreview;
 
     function compressImage(file) {
       return new Promise((resolve) => {
@@ -407,15 +532,14 @@
     document.getElementById("add-btn").onclick = async () => {
       const name = document.getElementById("m-name").value.trim();
       const phone = document.getElementById("m-phone").value.trim();
-      const planId = mPlan.value;
-      const plan = PLANS[planId];
+      const plan = getPlanById(mPlan.value);
       const fee = Number(mFee.value) || plan.fee;
       if (!name || !/^\d{10}$/.test(phone)) return alert("Enter valid name and 10-digit mobile.");
 
       const today = getTodayIST();
       await setDoc(doc(db, "members", phone), {
-        name, phone, planId, planName: plan.name, planDays: plan.days,
-        isStudent: plan.isStudent, lastFee: fee, lastPaid: today,
+        name, phone, planId: plan.id, planName: plan.name, planDays: plan.days,
+        isStudent: Boolean(plan.isStudent), lastFee: fee, lastPaid: today,
         validUntil: addDays(today, plan.days), lastReminded: ""
       });
       document.getElementById("m-name").value = "";
@@ -428,8 +552,10 @@
       if (!editingMember) return;
       document.getElementById("edit-phone-label").textContent = `Mobile: ${editingMember.phone}`;
       document.getElementById("edit-name").value = editingMember.name;
-      editPlan.value = editingMember.planId && PLANS[editingMember.planId] ? editingMember.planId : "reg_1m";
-      document.getElementById("edit-fee").value = editingMember.lastFee || PLANS[editPlan.value].fee;
+      editPlan.value = editingMember.planId && allPlans.some(p => p.id === editingMember.planId)
+        ? editingMember.planId
+        : (allPlans[0]?.id || "reg_1m");
+      document.getElementById("edit-fee").value = editingMember.lastFee || getPlanById(editPlan.value).fee;
       document.getElementById("edit-valid").value = editingMember.validUntil;
       editModal.style.display = "flex";
     };
@@ -440,14 +566,13 @@
       if (!editingMember) return;
       const name = document.getElementById("edit-name").value.trim();
       const validUntil = document.getElementById("edit-valid").value;
-      const planId = editPlan.value;
-      const plan = PLANS[planId];
+      const plan = getPlanById(editPlan.value);
       const fee = Number(document.getElementById("edit-fee").value) || plan.fee;
       if (!name || !validUntil) return alert("Name and Valid Until date are required.");
 
       await updateDoc(doc(db, "members", editingMember.phone), {
-        name, planId, planName: plan.name, planDays: plan.days,
-        isStudent: plan.isStudent, lastFee: fee, validUntil
+        name, planId: plan.id, planName: plan.name, planDays: plan.days,
+        isStudent: Boolean(plan.isStudent), lastFee: fee, validUntil
       });
       editModal.style.display = "none";
     };
@@ -463,10 +588,15 @@
     window.openPayModal = (phone) => {
       selectedMember = allMembers.find(m => m.phone === phone);
       if (!selectedMember) return;
-      const savedPlanId = selectedMember.planId && PLANS[selectedMember.planId] ? selectedMember.planId : "reg_1m";
+      const savedPlanId = selectedMember.planId && allPlans.some(p => p.id === selectedMember.planId)
+        ? selectedMember.planId
+        : (allPlans[0]?.id || "reg_1m");
       document.getElementById("pay-member-info").textContent = `${selectedMember.name} (${selectedMember.phone}) • Current expiry: ${selectedMember.validUntil}`;
       payPlan.value = savedPlanId;
-      payAmount.value = selectedMember.lastFee || PLANS[savedPlanId].fee;
+      customPlanBox.style.display = "none";
+      customLabelInput.value = "";
+      customDaysInput.value = "15";
+      payAmount.value = selectedMember.lastFee || getPlanById(savedPlanId).fee;
       document.getElementById("pay-txn").value = "";
       payMode.value = "UPI / Online";
       txnField.style.display = "block";
@@ -481,9 +611,11 @@
 
     document.getElementById("save-pay-btn").onclick = async () => {
       if (!selectedMember) return;
-      const planId = payPlan.value;
-      const plan = PLANS[planId];
-      const amount = Number(payAmount.value) || plan.fee;
+      const sel = getActivePaymentSelection();
+      if (payPlan.value === "custom" && (isNaN(Number(customDaysInput.value)) || Number(customDaysInput.value) < 1)) {
+        return alert("Enter a custom duration of at least 1 day.");
+      }
+      const amount = Number(payAmount.value) || 0;
       const mode = payMode.value;
       const txnId = mode === "Cash" ? "CASH" : (document.getElementById("pay-txn").value.trim() || "N/A");
 
@@ -493,18 +625,21 @@
 
       const today = getTodayIST();
       const base = selectedMember.validUntil > today ? selectedMember.validUntil : today;
-      const nextValid = addDays(base, plan.days);
+      const nextValid = addDays(base, sel.days);
 
       await addDoc(collection(db, "payments"), {
         date: today, createdAt: Date.now(), phone: selectedMember.phone, name: selectedMember.name,
-        amount, planId, planName: plan.name, planDays: plan.days, mode, txnId,
+        amount, planId: sel.planId, planName: sel.name, planDays: sel.days, mode, txnId,
         validUntil: nextValid, photo: compressedPhotoBase64 || ""
       });
 
-      await updateDoc(doc(db, "members", selectedMember.phone), {
-        planId, planName: plan.name, planDays: plan.days, isStudent: plan.isStudent,
+      const memberUpdate = {
+        planName: sel.name, planDays: sel.days, isStudent: sel.isStudent,
         validUntil: nextValid, lastPaid: today, lastFee: amount, lastPaymentMode: mode, lastTxnId: txnId
-      });
+      };
+      if (sel.planId !== "custom") memberUpdate.planId = sel.planId;
+
+      await updateDoc(doc(db, "members", selectedMember.phone), memberUpdate);
 
       payModal.style.display = "none";
     };
@@ -670,10 +805,22 @@
     revMonthInput.onchange = () => { if (revMonthInput.value) listenMonthlyRevenue(revMonthInput.value); };
     attDateInput.onchange = () => { if (attDateInput.value) listenAttendance(attDateInput.value); };
 
-    function initListeners() {
+    async function initListeners() {
       const today = getTodayIST();
       revMonthInput.value = today.slice(0, 7);
       attDateInput.value = today;
+
+      await seedDefaultPlansIfEmpty();
+
+      unsubPlans = onSnapshot(collection(db, "plans"), (snap) => {
+        if (!snap.empty) {
+          allPlans = snap.docs.map(d => d.data()).sort((a, b) => a.days - b.days || a.name.localeCompare(b.name));
+        } else {
+          allPlans = [...DEFAULT_PLANS];
+        }
+        renderPlansTable();
+        refreshPlanDropdowns();
+      });
 
       unsubMembers = onSnapshot(collection(db, "members"), (snap) => {
         allMembers = snap.docs.map(d => d.data());
@@ -719,6 +866,7 @@
         dashboard.style.display = "block";
         initListeners();
       } else {
+        if (unsubPlans) unsubPlans();
         if (unsubMembers) unsubMembers();
         if (unsubPayments) unsubPayments();
         if (unsubAtt) unsubAtt();
@@ -727,9 +875,6 @@
         dashboard.style.display = "none";
       }
     });
-    if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("./sw.js").catch(() => {});
-}
   </script>
 </body>
 </html>
