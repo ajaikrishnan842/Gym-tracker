@@ -3,7 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Fitness Planet Gym - Admin</title>
+  <meta name="theme-color" content="#0f172a" />
+  <link rel="manifest" href="manifest.json" />
+  <title>Fitness Planet Gym, Periye — Admin</title>
   <style>
     * { box-sizing: border-box; font-family: system-ui, -apple-system, sans-serif; }
     body { margin: 0; background: #f8fafc; color: #0f172a; padding: 20px; max-width: 1050px; margin: auto; }
@@ -49,7 +51,8 @@
 </head>
 <body>
   <div id="lock-screen" class="card" style="max-width:360px; margin:80px auto; text-align:center;">
-    <h2>Admin Login</h2>
+    <h2>Fitness Planet Gym</h2>
+    <p style="margin:-8px 0 16px; color:#64748b; font-size:0.88rem;">Periye • Admin Login</p>
     <input id="email-input" type="email" placeholder="Owner Email" style="width:100%; margin-bottom:10px;" />
     <input id="pass-input" type="password" placeholder="Password" style="width:100%; margin-bottom:10px;" />
     <button id="login-btn" style="width:100%;">Sign In</button>
@@ -58,7 +61,7 @@
 
   <div id="dashboard" style="display:none;">
     <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:16px;">
-      <h2 style="margin:0;">Gym Admin & Fees Tracker</h2>
+      <h2 style="margin:0;">Fitness Planet Gym, Periye — Admin</h2>
       <div style="display:flex; gap:12px; align-items:center;">
         <a href="index.html" style="color:#2563eb; font-weight:600; text-decoration:none;">← Open QR Kiosk</a>
         <button id="logout-btn" class="danger" style="padding:7px 12px; font-size:0.85rem;">Sign Out</button>
@@ -205,6 +208,42 @@
     </div>
   </div>
 
+  <!-- Edit / Delete Member Modal -->
+  <div id="edit-modal" class="modal-bg">
+    <div class="modal">
+      <h3 style="margin-bottom:4px;">Edit Member</h3>
+      <p id="edit-phone-label" style="margin:0 0 14px; color:#475569; font-size:0.9rem;"></p>
+
+      <div class="field">
+        <label>Full Name</label>
+        <input id="edit-name" />
+      </div>
+
+      <div class="field">
+        <label>Plan</label>
+        <select id="edit-plan"></select>
+      </div>
+
+      <div class="field">
+        <label>Plan Fee (₹)</label>
+        <input id="edit-fee" type="number" />
+      </div>
+
+      <div class="field">
+        <label>Valid Until</label>
+        <input id="edit-valid" type="date" />
+      </div>
+
+      <div style="display:flex; gap:10px; margin-top:16px;">
+        <button id="save-edit-btn" style="flex:1;">Save Changes</button>
+        <button id="close-edit-btn" class="gray">Cancel</button>
+      </div>
+
+      <hr style="border:none; border-top:1px solid #e2e8f0; margin:18px 0 12px;" />
+      <button id="delete-member-btn" class="danger" style="width:100%;">Delete Member Permanently</button>
+    </div>
+  </div>
+
   <!-- Photo Viewer Modal -->
   <div id="img-modal" class="modal-bg" onclick="this.style.display='none'">
     <div class="modal" style="text-align:center;" onclick="event.stopPropagation()">
@@ -216,7 +255,7 @@
 
   <script type="module">
     import { db, auth, getTodayIST } from "./firebase-config.js";
-    import { doc, setDoc, updateDoc, addDoc, collection, onSnapshot, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-firestore.js";
+    import { doc, setDoc, updateDoc, deleteDoc, addDoc, collection, onSnapshot, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-firestore.js";
     import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-auth.js";
 
     // EDIT YOUR GYM'S PLAN PRICES HERE
@@ -240,6 +279,8 @@
     const payPhotoInput = document.getElementById("pay-photo");
     const photoPreview = document.getElementById("photo-preview");
     const expiryPreview = document.getElementById("expiry-preview");
+    const editModal = document.getElementById("edit-modal");
+    const editPlan = document.getElementById("edit-plan");
     const revMonthInput = document.getElementById("rev-month");
     const attDateInput = document.getElementById("att-date");
 
@@ -248,6 +289,7 @@
       .join("");
     mPlan.innerHTML = optionsHtml;
     payPlan.innerHTML = optionsHtml;
+    editPlan.innerHTML = optionsHtml;
     mFee.value = PLANS[mPlan.value].fee;
     mPlan.onchange = () => { mFee.value = PLANS[mPlan.value].fee; };
 
@@ -257,9 +299,9 @@
     let currentDayAttendance = [];
     let filterMode = "all";
     let selectedMember = null;
+    let editingMember = null;
     let compressedPhotoBase64 = "";
 
-    // CSV Download Helper
     function downloadCSV(filename, headers, rows) {
       const esc = (v) => {
         const s = String(v ?? "");
@@ -380,6 +422,44 @@
       document.getElementById("m-phone").value = "";
     };
 
+    // Edit / Delete Member Modal
+    window.openEditModal = (phone) => {
+      editingMember = allMembers.find(m => m.phone === phone);
+      if (!editingMember) return;
+      document.getElementById("edit-phone-label").textContent = `Mobile: ${editingMember.phone}`;
+      document.getElementById("edit-name").value = editingMember.name;
+      editPlan.value = editingMember.planId && PLANS[editingMember.planId] ? editingMember.planId : "reg_1m";
+      document.getElementById("edit-fee").value = editingMember.lastFee || PLANS[editPlan.value].fee;
+      document.getElementById("edit-valid").value = editingMember.validUntil;
+      editModal.style.display = "flex";
+    };
+
+    document.getElementById("close-edit-btn").onclick = () => editModal.style.display = "none";
+
+    document.getElementById("save-edit-btn").onclick = async () => {
+      if (!editingMember) return;
+      const name = document.getElementById("edit-name").value.trim();
+      const validUntil = document.getElementById("edit-valid").value;
+      const planId = editPlan.value;
+      const plan = PLANS[planId];
+      const fee = Number(document.getElementById("edit-fee").value) || plan.fee;
+      if (!name || !validUntil) return alert("Name and Valid Until date are required.");
+
+      await updateDoc(doc(db, "members", editingMember.phone), {
+        name, planId, planName: plan.name, planDays: plan.days,
+        isStudent: plan.isStudent, lastFee: fee, validUntil
+      });
+      editModal.style.display = "none";
+    };
+
+    document.getElementById("delete-member-btn").onclick = async () => {
+      if (!editingMember) return;
+      if (!confirm(`Delete ${editingMember.name} (${editingMember.phone}) permanently?`)) return;
+      await deleteDoc(doc(db, "members", editingMember.phone));
+      editModal.style.display = "none";
+    };
+
+    // Record Payment Modal
     window.openPayModal = (phone) => {
       selectedMember = allMembers.find(m => m.phone === phone);
       if (!selectedMember) return;
@@ -432,7 +512,7 @@
     window.sendReminder = async (phone, name, fee, validUntil, isOverdue) => {
       const today = getTodayIST();
       const text = encodeURIComponent(
-        `Hi ${name}, reminder from Fitness Planet Gym, Periye your gym fee (₹${fee || 1000}) ${isOverdue ? "expired" : "is due"} on ${validUntil}. Please renew via UPI or Cash at reception. Thank you!`
+        `Hi ${name}, reminder from Fitness Planet Gym, Periye: your gym fee (₹${fee || 1000}) ${isOverdue ? "expired" : "is due"} on ${validUntil}. Please renew via UPI or Cash at reception. Contact: 8606178119.`
       );
       window.open(`https://wa.me/91${phone}?text=${text}`, "_blank");
       await updateDoc(doc(db, "members", phone), { lastReminded: today });
@@ -531,6 +611,7 @@
               <td class="actions">
                 <button class="green" onclick="openPayModal('${m.phone}')">Record Fee</button>
                 <button class="gray" onclick="manualCheckIn('${m.phone}','${m.name}','${m.validUntil}')">Check-In</button>
+                <button class="outline" onclick="openEditModal('${m.phone}')">Edit</button>
                 <button class="wa" style="border:none;" onclick="sendReminder('${m.phone}','${m.name}',${m.lastFee || 1000},'${m.validUntil}',${diffDays < 0})">WA</button>
               </td>
             </tr>
@@ -610,7 +691,7 @@
         snap.docs.forEach(d => {
           const p = d.data();
           const receiptText = encodeURIComponent(
-            `Hi ${p.name}, we received your gym fee of ₹${p.amount} (${p.planName || "Renewal"}) via ${p.mode}${p.txnId !== "CASH" ? " (Ref: " + p.txnId + ")" : ""}. Your membership is now valid until ${p.validUntil}. Thank you!`
+            `Hi ${p.name}, Fitness Planet Gym (Periye) received your gym fee of ₹${p.amount} (${p.planName || "Renewal"}) via ${p.mode}${p.txnId !== "CASH" ? " (Ref: " + p.txnId + ")" : ""}. Valid until ${p.validUntil}. Contact: 8606178119.`
           );
           const photoBtn = p.photo
             ? `<button class="gray" onclick="viewPhoto('${p.photo}')">View Photo</button>`
