@@ -3,6 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0f172a" />
+  <link rel="manifest" href="manifest.json" />
   <title>Fitness Planet Gym — Check-In Kiosk</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
   <style>
@@ -25,8 +27,8 @@
     .ok { background: #14532d; border: 2px solid #22c55e; }
     .soon { background: #713f12; border: 2px solid #eab308; }
     .warn { background: #7f1d1d; border: 2px solid #ef4444; }
-    .footer-links { margin-top: 22px; display: flex; gap: 18px; align-items: center; }
-    .footer-links a, .footer-links button { background: none; color: #64748b; text-decoration: none; font-size: 0.85rem; padding: 0; width: auto; font-weight: 500; }
+    .footer-links { margin-top: 22px; display: flex; gap: 18px; align-items: center; flex-wrap: wrap; justify-content: center; }
+    .footer-links a, .footer-links button { background: none; color: #94a3b8; text-decoration: none; font-size: 0.85rem; padding: 0; width: auto; font-weight: 500; }
   </style>
 </head>
 <body>
@@ -56,6 +58,7 @@
   </div>
 
   <div id="footer" class="footer-links" style="display:none;">
+    <button id="sound-btn">🔊 Sound: On</button>
     <a href="admin.html">Admin Dashboard →</a>
     <button id="logout-btn">Sign Out</button>
   </div>
@@ -72,6 +75,9 @@
     let timerId = null;
     let activeToken = null;
     let unsubToken = null;
+    let wakeLock = null;
+    let soundEnabled = true;
+    let audioCtx = null;
 
     const loginCard = document.getElementById("login-card");
     const kioskCard = document.getElementById("kiosk-card");
@@ -82,6 +88,64 @@
     const overlay = document.getElementById("overlay");
     const timerEl = document.getElementById("timer");
     const barEl = document.getElementById("bar");
+    const soundBtn = document.getElementById("sound-btn");
+
+    // Unlock browser audio on first tap
+    function unlockAudio() {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === "suspended") audioCtx.resume();
+    }
+    document.addEventListener("click", unlockAudio, { once: true });
+
+    soundBtn.onclick = () => {
+      unlockAudio();
+      soundEnabled = !soundEnabled;
+      soundBtn.textContent = soundEnabled ? "🔊 Sound: On" : "🔇 Sound: Off";
+    };
+
+    function beep(freq, duration, startOffset, type = "sine", vol = 0.25) {
+      if (!audioCtx) return;
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = type;
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(vol, audioCtx.currentTime + startOffset);
+      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + startOffset + duration);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(audioCtx.currentTime + startOffset);
+      osc.stop(audioCtx.currentTime + startOffset + duration);
+    }
+
+    function playCheckInSound(feeStatus) {
+      if (!soundEnabled) return;
+      unlockAudio();
+      if (feeStatus === "EXPIRED") {
+        // Low double buzz
+        beep(220, 0.22, 0, "sawtooth", 0.2);
+        beep(180, 0.30, 0.28, "sawtooth", 0.2);
+      } else if (feeStatus === "DUE_SOON") {
+        // Neutral double beep
+        beep(660, 0.14, 0, "triangle", 0.25);
+        beep(660, 0.18, 0.20, "triangle", 0.25);
+      } else {
+        // Pleasant rising chime
+        beep(880, 0.14, 0, "sine", 0.25);
+        beep(1174, 0.22, 0.15, "sine", 0.25);
+      }
+    }
+
+    // Keep screen awake while kiosk is active
+    async function requestWakeLock() {
+      if (!("wakeLock" in navigator)) return;
+      try {
+        wakeLock = await navigator.wakeLock.request("screen");
+      } catch { /* ignored if unsupported or battery saver */ }
+    }
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible" && auth.currentUser) requestWakeLock();
+    });
 
     function randomToken() {
       return "tk_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
@@ -118,6 +182,7 @@
     }
 
     function showWelcome(data) {
+      playCheckInSound(data.feeStatus);
       qrSection.style.display = "none";
       overlay.style.display = "block";
 
@@ -143,6 +208,7 @@
     }
 
     document.getElementById("login-btn").onclick = async () => {
+      unlockAudio();
       loginErr.textContent = "";
       try {
         await signInWithEmailAndPassword(auth, document.getElementById("email").value.trim(), document.getElementById("password").value);
@@ -158,6 +224,7 @@
         loginCard.style.display = "none";
         kioskCard.style.display = "block";
         footer.style.display = "flex";
+        requestWakeLock();
 
         if (!unsubToken) {
           unsubToken = onSnapshot(currentTokenRef, (snap) => {
@@ -173,6 +240,7 @@
       } else {
         if (timerId) clearInterval(timerId);
         if (unsubToken) { unsubToken(); unsubToken = null; }
+        if (wakeLock) { wakeLock.release(); wakeLock = null; }
         activeToken = null;
         loginCard.style.display = "block";
         kioskCard.style.display = "none";
