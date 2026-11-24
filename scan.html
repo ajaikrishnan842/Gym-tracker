@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Member Check-In</title>
+  <style>
+    * { box-sizing: border-box; font-family: system-ui, -apple-system, sans-serif; }
+    body { margin: 0; background: #f1f5f9; color: #0f172a; display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
+    .box { background: #fff; padding: 28px; border-radius: 16px; width: 100%; max-width: 380px; box-shadow: 0 10px 25px rgba(0,0,0,0.08); text-align: center; }
+    input { width: 100%; padding: 14px; font-size: 1.1rem; border: 1.5px solid #cbd5e1; border-radius: 10px; margin: 12px 0; text-align: center; }
+    button { width: 100%; padding: 14px; font-size: 1rem; font-weight: 600; background: #2563eb; color: #fff; border: none; border-radius: 10px; cursor: pointer; }
+    .status { padding: 16px; border-radius: 12px; margin-top: 16px; font-weight: 500; line-height: 1.45; }
+    .success { background: #dcfce7; color: #166534; }
+    .soon { background: #fef9c3; color: #854d0e; border: 1.5px solid #eab308; }
+    .warning { background: #fef2f2; color: #991b1b; border: 1.5px solid #ef4444; }
+    .error { background: #fee2e2; color: #991b1b; }
+    .link-btn { background: none; color: #64748b; font-size: 0.85rem; margin-top: 12px; text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h2 style="margin-top:0;">Gym Check-In</h2>
+    <div id="form-area">
+      <p style="color:#475569; margin:0;">Enter your registered 10-digit mobile number (saved for future visits):</p>
+      <input id="phone" type="tel" maxlength="10" placeholder="9876543210" />
+      <button id="submit-btn">Mark Attendance</button>
+    </div>
+    <div id="result"></div>
+    <button id="reset-phone" class="link-btn" style="display:none;">Not your number? Change mobile</button>
+  </div>
+
+  <script type="module">
+    import { db, getTodayIST } from "./firebase-config.js";
+    import { doc, runTransaction } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-firestore.js";
+
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("t");
+    const formArea = document.getElementById("form-area");
+    const resultEl = document.getElementById("result");
+    const phoneInput = document.getElementById("phone");
+    const resetBtn = document.getElementById("reset-phone");
+
+    function showMsg(type, html) {
+      resultEl.innerHTML = `<div class="status ${type}">${html}</div>`;
+    }
+
+    async function markAttendance(phone) {
+      if (!token) return showMsg("error", "No QR token found. Please scan the QR at reception.");
+      if (!/^\d{10}$/.test(phone)) return showMsg("error", "Please enter a valid 10-digit mobile number.");
+
+      formArea.style.display = "none";
+      showMsg("", "Verifying QR...");
+
+      const today = getTodayIST();
+      const istTime = new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" });
+
+      try {
+        const res = await runTransaction(db, async (tx) => {
+          const tokenRef = doc(db, "qr_tokens", "current");
+          const memberRef = doc(db, "members", phone);
+          const attRef = doc(db, "attendance", `${today}_${phone}`);
+
+          const [tokenSnap, memberSnap, attSnap] = await Promise.all([
+            tx.get(tokenRef),
+            tx.get(memberRef),
+            tx.get(attRef)
+          ]);
+
+          if (!tokenSnap.exists()) throw new Error("Kiosk QR is not active. Ask reception.");
+          const tData = tokenSnap.data();
+
+          if (tData.token !== token) throw new Error("QR expired. Please scan the fresh QR on screen.");
+          if (tData.used) throw new Error("This QR was already used. Scan the fresh QR on screen.");
+          if (Date.now() - tData.createdAt > 35000) throw new Error("QR expired (30s limit). Scan the fresh QR.");
+          if (!memberSnap.exists()) throw new Error("Mobile number not registered. Please ask reception.");
+          if (attSnap.exists()) throw new Error("You have already marked attendance today!");
+
+          const member = memberSnap.data();
+          const daysLeft = Math.round(
+            (new Date(member.validUntil + "T00:00:00") - new Date(today + "T00:00:00")) / 86400000
+          );
+
+          let feeStatus = "ACTIVE";
+          if (daysLeft < 0) feeStatus = "EXPIRED";
+          else if (daysLeft <= 5) feeStatus = "DUE_SOON";
+
+          tx.update(tokenRef, { used: true, usedBy: member.name, feeStatus, daysLeft, validUntil: member.validUntil });
+          tx.set(attRef, { date: today, time: istTime, phone, name: member.name, feeStatus, tokenUsed: token });
+
+          return { name: member.name, validUntil: member.validUntil, feeStatus, daysLeft };
+        });
+
+        localStorage.setItem("gym_phone", phone);
+        resetBtn.style.display = "block";
+
+        if (res.feeStatus === "EXPIRED") {
+          showMsg("warning", `✅ Attendance Marked for <b>${res.name}</b><br><br>⚠️ <b>Fee Expired on ${res.validUntil}</b>.<br>Please renew your membership at reception.`);
+        } else if (res.feeStatus === "DUE_SOON") {
+          const dueText = res.daysLeft === 0 ? "expires <b>today</b>" : `expires in <b>${res.daysLeft} day${res.daysLeft === 1 ? "" : "s"}</b>`;
+          showMsg("soon", `✅ Welcome, <b>${res.name}</b>!<br><br>⏳ Reminder: Your plan ${dueText} (<b>${res.validUntil}</b>).<br>Please renew soon at reception.`);
+        } else {
+          showMsg("success", `✅ Welcome, <b>${res.name}</b>!<br><br>Attendance marked.<br>Plan valid until: <b>${res.validUntil}</b>`);
+        }
+      } catch (err) {
+        formArea.style.display = "block";
+        showMsg("error", `❌ ${err.message}`);
+      }
+    }
+
+    document.getElementById("submit-btn").onclick = () => markAttendance(phoneInput.value.trim());
+
+    resetBtn.onclick = () => {
+      localStorage.removeItem("gym_phone");
+      location.reload();
+    };
+
+    const savedPhone = localStorage.getItem("gym_phone");
+    if (savedPhone) {
+      phoneInput.value = savedPhone;
+      resetBtn.style.display = "block";
+      markAttendance(savedPhone);
+    }
+  </script>
+</body>
+</html>

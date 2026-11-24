@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Gym Admin Dashboard</title>
+  <style>
+    * { box-sizing: border-box; font-family: system-ui, -apple-system, sans-serif; }
+    body { margin: 0; background: #f8fafc; color: #0f172a; padding: 20px; max-width: 1050px; margin: auto; }
+    .card { background: #fff; padding: 20px; border-radius: 14px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); margin-bottom: 20px; }
+    .alert-card { background: #fffbeb; border: 1.5px solid #f59e0b; padding: 16px 20px; border-radius: 14px; margin-bottom: 20px; display: none; }
+    .alert-item { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid #fde68a; flex-wrap: wrap; }
+    h2, h3 { margin-top: 0; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+    input, select, button { padding: 10px 12px; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 0.92rem; }
+    button { background: #2563eb; color: #fff; border: none; cursor: pointer; font-weight: 600; }
+    button.green { background: #16a34a; }
+    button.gray { background: #475569; }
+    button.danger { background: #dc2626; }
+    button.outline { background: #fff; color: #334155; border: 1px solid #cbd5e1; }
+    button.outline.selected { background: #0f172a; color: #fff; border-color: #0f172a; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 0.88rem; }
+    th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid #e2e8f0; }
+    .badge { padding: 3px 8px; border-radius: 99px; font-size: 0.76rem; font-weight: 600; white-space: nowrap; }
+    .active { background: #dcfce7; color: #166534; }
+    .expired { background: #fee2e2; color: #991b1b; }
+    .soon { background: #fef9c3; color: #854d0e; }
+    .student-tag { background: #e0e7ff; color: #3730a3; padding: 2px 7px; border-radius: 6px; font-size: 0.72rem; font-weight: 600; margin-left: 4px; }
+    .actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+    .actions button, .actions a { padding: 5px 9px; font-size: 0.8rem; border-radius: 6px; text-decoration: none; }
+    .wa { background: #25D366; color: #fff; font-weight: 600; }
+    .toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; justify-content: space-between; }
+    #login-err { color: #dc2626; font-size: 0.85rem; margin-top: 10px; min-height: 18px; }
+    .modal-bg { display: none; position: fixed; inset: 0; background: rgba(15,23,42,0.6); align-items: center; justify-content: center; padding: 16px; z-index: 50; }
+    .modal { background: #fff; padding: 24px; border-radius: 16px; width: 100%; max-width: 420px; max-height: 90vh; overflow-y: auto; }
+    .field { margin-bottom: 12px; }
+    .field label { display: block; font-size: 0.82rem; font-weight: 600; color: #475569; margin-bottom: 4px; }
+    .field input, .field select { width: 100%; }
+    .preview-box { background: #f0fdf4; border: 1px solid #86efac; color: #166534; padding: 10px 12px; border-radius: 8px; font-size: 0.88rem; margin-bottom: 12px; }
+    #photo-preview { max-width: 100%; max-height: 180px; border-radius: 8px; margin-top: 8px; display: none; border: 1px solid #e2e8f0; }
+  </style>
+</head>
+<body>
+  <div id="lock-screen" class="card" style="max-width:360px; margin:80px auto; text-align:center;">
+    <h2>Admin Login</h2>
+    <input id="email-input" type="email" placeholder="Owner Email" style="width:100%; margin-bottom:10px;" />
+    <input id="pass-input" type="password" placeholder="Password" style="width:100%; margin-bottom:10px;" />
+    <button id="login-btn" style="width:100%;">Sign In</button>
+    <div id="login-err"></div>
+  </div>
+
+  <div id="dashboard" style="display:none;">
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:16px;">
+      <h2 style="margin:0;">Gym Admin & Fees Tracker</h2>
+      <div style="display:flex; gap:12px; align-items:center;">
+        <a href="index.html" style="color:#2563eb; font-weight:600; text-decoration:none;">← Open QR Kiosk</a>
+        <button id="logout-btn" class="danger" style="padding:7px 12px; font-size:0.85rem;">Sign Out</button>
+      </div>
+    </div>
+
+    <div id="renewal-alerts" class="alert-card">
+      <h3 style="margin:0 0 8px; color:#92400e;">🔔 Renewal Reminders Due Today (<span id="alert-count">0</span>)</h3>
+      <div id="alert-list"></div>
+    </div>
+
+    <div class="card">
+      <h3>Add New Member</h3>
+      <div class="grid">
+        <input id="m-name" placeholder="Full Name" />
+        <input id="m-phone" type="tel" maxlength="10" placeholder="10-digit Mobile" />
+        <select id="m-plan"></select>
+        <input id="m-fee" type="number" placeholder="Fee (₹)" />
+        <button id="add-btn">Save Member</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="toolbar">
+        <h3 style="margin:0;">Members & Plans</h3>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button id="filter-all" class="outline selected" style="padding:6px 12px; font-size:0.85rem;">All</button>
+          <button id="filter-due" class="outline" style="padding:6px 12px; font-size:0.85rem;">Due / Overdue</button>
+          <button id="filter-student" class="outline" style="padding:6px 12px; font-size:0.85rem;">Students</button>
+          <input id="search" placeholder="Search name or mobile..." style="padding:6px 10px; width:190px;" />
+        </div>
+      </div>
+      <div style="overflow-x:auto;">
+        <table>
+          <thead><tr><th>Name</th><th>Plan</th><th>Valid Until</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody id="member-list"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Recent Fee Payments</h3>
+      <div style="overflow-x:auto;">
+        <table>
+          <thead><tr><th>Date</th><th>Member</th><th>Amount & Plan</th><th>Mode / Txn ID</th><th>Proof & Receipt</th></tr></thead>
+          <tbody id="payment-list"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Today's Attendance (<span id="att-count">0</span>)</h3>
+      <div style="overflow-x:auto;">
+        <table>
+          <thead><tr><th>Time</th><th>Name</th><th>Mobile</th><th>Fee Status</th></tr></thead>
+          <tbody id="att-list"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Record Payment Modal -->
+  <div id="pay-modal" class="modal-bg">
+    <div class="modal">
+      <h3 style="margin-bottom:4px;">Record Fee Payment</h3>
+      <p id="pay-member-info" style="margin:0 0 14px; color:#475569; font-size:0.9rem;"></p>
+
+      <div class="field">
+        <label>Membership Plan (Auto-selected)</label>
+        <select id="pay-plan"></select>
+      </div>
+
+      <div id="expiry-preview" class="preview-box"></div>
+
+      <div class="field">
+        <label>Amount Paid (₹)</label>
+        <input id="pay-amount" type="number" />
+      </div>
+
+      <div class="field">
+        <label>Payment Mode</label>
+        <select id="pay-mode">
+          <option value="UPI / Online">UPI / Online</option>
+          <option value="Cash">Cash</option>
+        </select>
+      </div>
+
+      <div class="field" id="txn-field">
+        <label>Transaction / UTR Number</label>
+        <input id="pay-txn" placeholder="e.g. 429108374612" />
+      </div>
+
+      <div class="field">
+        <label>Payment Screenshot / Receipt Photo (Optional)</label>
+        <input id="pay-photo" type="file" accept="image/*" />
+        <img id="photo-preview" alt="Preview" />
+      </div>
+
+      <div style="display:flex; gap:10px; margin-top:16px;">
+        <button id="save-pay-btn" class="green" style="flex:1;">Confirm Payment</button>
+        <button id="close-pay-btn" class="gray">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Photo Viewer Modal -->
+  <div id="img-modal" class="modal-bg" onclick="this.style.display='none'">
+    <div class="modal" style="text-align:center;" onclick="event.stopPropagation()">
+      <h3 style="margin-bottom:10px;">Payment Proof</h3>
+      <img id="viewer-img" style="max-width:100%; border-radius:8px;" />
+      <button onclick="document.getElementById('img-modal').style.display='none'" class="gray" style="margin-top:14px; width:100%;">Close</button>
+    </div>
+  </div>
+
+  <script type="module">
+    import { db, auth, getTodayIST } from "./firebase-config.js";
+    import { doc, setDoc, updateDoc, addDoc, collection, onSnapshot, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-firestore.js";
+    import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-auth.js";
+
+    // EDIT YOUR GYM'S PLAN PRICES HERE
+    const PLANS = {
+      reg_1m: { name: "1 Month", days: 30, fee: 1000, isStudent: false },
+      reg_3m: { name: "3 Months", days: 90, fee: 2700, isStudent: false },
+      stu_1m: { name: "Student - 1 Month", days: 30, fee: 700, isStudent: true },
+      stu_3m: { name: "Student - 3 Months", days: 90, fee: 1800, isStudent: true }
+    };
+
+    const lockScreen = document.getElementById("lock-screen");
+    const dashboard = document.getElementById("dashboard");
+    const loginErr = document.getElementById("login-err");
+    const mPlan = document.getElementById("m-plan");
+    const mFee = document.getElementById("m-fee");
+    const payModal = document.getElementById("pay-modal");
+    const payPlan = document.getElementById("pay-plan");
+    const payAmount = document.getElementById("pay-amount");
+    const payMode = document.getElementById("pay-mode");
+    const txnField = document.getElementById("txn-field");
+    const payPhotoInput = document.getElementById("pay-photo");
+    const photoPreview = document.getElementById("photo-preview");
+    const expiryPreview = document.getElementById("expiry-preview");
+
+    const optionsHtml = Object.entries(PLANS)
+      .map(([id, p]) => `<option value="${id}">${p.name} (₹${p.fee} / ${p.days}d)</option>`)
+      .join("");
+    mPlan.innerHTML = optionsHtml;
+    payPlan.innerHTML = optionsHtml;
+    mFee.value = PLANS[mPlan.value].fee;
+    mPlan.onchange = () => { mFee.value = PLANS[mPlan.value].fee; };
+
+    let unsubMembers = null, unsubAtt = null, unsubPayments = null;
+    let allMembers = [];
+    let filterMode = "all";
+    let selectedMember = null;
+    let compressedPhotoBase64 = "";
+
+    document.getElementById("login-btn").onclick = async () => {
+      loginErr.textContent = "";
+      try {
+        await signInWithEmailAndPassword(auth, document.getElementById("email-input").value.trim(), document.getElementById("pass-input").value);
+      } catch {
+        loginErr.textContent = "Invalid email or password.";
+      }
+    };
+
+    document.getElementById("logout-btn").onclick = () => signOut(auth);
+
+    function addDays(baseDateStr, days) {
+      const d = new Date(baseDateStr + "T00:00:00");
+      d.setDate(d.getDate() + Number(days));
+      return d.toISOString().slice(0, 10);
+    }
+
+    function updateExpiryPreview() {
+      if (!selectedMember) return;
+      const plan = PLANS[payPlan.value] || PLANS.reg_1m;
+      const today = getTodayIST();
+      const base = selectedMember.validUntil > today ? selectedMember.validUntil : today;
+      const nextValid = addDays(base, plan.days);
+      expiryPreview.innerHTML = `New Expiry Date: <b>${nextValid}</b> (+${plan.days} days from ${base === today ? "today" : "current expiry"})`;
+    }
+
+    payPlan.onchange = () => {
+      payAmount.value = PLANS[payPlan.value].fee;
+      updateExpiryPreview();
+    };
+
+    function compressImage(file) {
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const img = new Image();
+          img.onload = () => {
+            const scale = Math.min(1, 600 / img.width);
+            const canvas = document.createElement("canvas");
+            canvas.width = img.width * scale;
+            canvas.height = img.height * scale;
+            canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+            resolve(canvas.toDataURL("image/jpeg", 0.65));
+          };
+          img.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    payPhotoInput.onchange = async (e) => {
+      const file = e.target.files[0];
+      if (!file) { compressedPhotoBase64 = ""; photoPreview.style.display = "none"; return; }
+      compressedPhotoBase64 = await compressImage(file);
+      photoPreview.src = compressedPhotoBase64;
+      photoPreview.style.display = "block";
+    };
+
+    payMode.onchange = () => { txnField.style.display = payMode.value === "Cash" ? "none" : "block"; };
+
+    document.getElementById("add-btn").onclick = async () => {
+      const name = document.getElementById("m-name").value.trim();
+      const phone = document.getElementById("m-phone").value.trim();
+      const planId = mPlan.value;
+      const plan = PLANS[planId];
+      const fee = Number(mFee.value) || plan.fee;
+      if (!name || !/^\d{10}$/.test(phone)) return alert("Enter valid name and 10-digit mobile.");
+
+      const today = getTodayIST();
+      await setDoc(doc(db, "members", phone), {
+        name, phone, planId, planName: plan.name, planDays: plan.days,
+        isStudent: plan.isStudent, lastFee: fee, lastPaid: today,
+        validUntil: addDays(today, plan.days), lastReminded: ""
+      });
+      document.getElementById("m-name").value = "";
+      document.getElementById("m-phone").value = "";
+    };
+
+    window.openPayModal = (phone) => {
+      selectedMember = allMembers.find(m => m.phone === phone);
+      if (!selectedMember) return;
+      const savedPlanId = selectedMember.planId && PLANS[selectedMember.planId] ? selectedMember.planId : "reg_1m";
+      document.getElementById("pay-member-info").textContent = `${selectedMember.name} (${selectedMember.phone}) • Current expiry: ${selectedMember.validUntil}`;
+      payPlan.value = savedPlanId;
+      payAmount.value = selectedMember.lastFee || PLANS[savedPlanId].fee;
+      document.getElementById("pay-txn").value = "";
+      payMode.value = "UPI / Online";
+      txnField.style.display = "block";
+      payPhotoInput.value = "";
+      compressedPhotoBase64 = "";
+      photoPreview.style.display = "none";
+      updateExpiryPreview();
+      payModal.style.display = "flex";
+    };
+
+    document.getElementById("close-pay-btn").onclick = () => payModal.style.display = "none";
+
+    document.getElementById("save-pay-btn").onclick = async () => {
+      if (!selectedMember) return;
+      const planId = payPlan.value;
+      const plan = PLANS[planId];
+      const amount = Number(payAmount.value) || plan.fee;
+      const mode = payMode.value;
+      const txnId = mode === "Cash" ? "CASH" : (document.getElementById("pay-txn").value.trim() || "N/A");
+
+      if (mode !== "Cash" && txnId === "N/A" && !compressedPhotoBase64) {
+        return alert("Please enter a Transaction/UTR number or attach a payment screenshot.");
+      }
+
+      const today = getTodayIST();
+      const base = selectedMember.validUntil > today ? selectedMember.validUntil : today;
+      const nextValid = addDays(base, plan.days);
+
+      await addDoc(collection(db, "payments"), {
+        date: today, createdAt: Date.now(), phone: selectedMember.phone, name: selectedMember.name,
+        amount, planId, planName: plan.name, planDays: plan.days, mode, txnId,
+        validUntil: nextValid, photo: compressedPhotoBase64 || ""
+      });
+
+      await updateDoc(doc(db, "members", selectedMember.phone), {
+        planId, planName: plan.name, planDays: plan.days, isStudent: plan.isStudent,
+        validUntil: nextValid, lastPaid: today, lastFee: amount, lastPaymentMode: mode, lastTxnId: txnId
+      });
+
+      payModal.style.display = "none";
+    };
+
+    window.sendReminder = async (phone, name, fee, validUntil, isOverdue) => {
+      const today = getTodayIST();
+      const text = encodeURIComponent(
+        `Hi ${name}, reminder that your gym fee (₹${fee || 1000}) ${isOverdue ? "expired" : "is due"} on ${validUntil}. Please renew via UPI or Cash at reception. Thank you!`
+      );
+      window.open(`https://wa.me/91${phone}?text=${text}`, "_blank");
+      await updateDoc(doc(db, "members", phone), { lastReminded: today });
+    };
+
+    window.viewPhoto = (base64) => {
+      document.getElementById("viewer-img").src = base64;
+      document.getElementById("img-modal").style.display = "flex";
+    };
+
+    window.manualCheckIn = async (phone, name, validUntil) => {
+      const today = getTodayIST();
+      const istTime = new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" });
+      await setDoc(doc(db, "attendance", `${today}_${phone}`), {
+        date: today, time: istTime, phone, name,
+        feeStatus: today > validUntil ? "EXPIRED" : "ACTIVE", tokenUsed: "MANUAL"
+      });
+    };
+
+    function setFilter(mode, btnId) {
+      filterMode = mode;
+      ["filter-all", "filter-due", "filter-student"].forEach(id => {
+        document.getElementById(id).classList.toggle("selected", id === btnId);
+      });
+      renderMembers();
+    }
+
+    document.getElementById("filter-all").onclick = () => setFilter("all", "filter-all");
+    document.getElementById("filter-due").onclick = () => setFilter("due", "filter-due");
+    document.getElementById("filter-student").onclick = () => setFilter("student", "filter-student");
+    document.getElementById("search").oninput = renderMembers;
+
+    function renderRenewalAlerts() {
+      const today = getTodayIST();
+      const dueToday = allMembers
+        .filter(m => {
+          const diffDays = Math.ceil((new Date(m.validUntil) - new Date(today)) / 86400000);
+          return diffDays <= 5 && m.lastReminded !== today;
+        })
+        .sort((a, b) => a.validUntil.localeCompare(b.validUntil));
+
+      const alertBox = document.getElementById("renewal-alerts");
+      const alertList = document.getElementById("alert-list");
+      document.getElementById("alert-count").textContent = dueToday.length;
+
+      if (dueToday.length === 0) { alertBox.style.display = "none"; return; }
+
+      alertBox.style.display = "block";
+      alertList.innerHTML = "";
+      dueToday.forEach(m => {
+        const diffDays = Math.ceil((new Date(m.validUntil) - new Date(today)) / 86400000);
+        const statusText = diffDays < 0 ? `Overdue by ${Math.abs(diffDays)}d` : (diffDays === 0 ? "Expires today" : `Due in ${diffDays}d`);
+        alertList.innerHTML += `
+          <div class="alert-item">
+            <div><b>${m.name}</b> (${m.phone}) — <span style="color:#b45309; font-weight:600;">${statusText}</span> (${m.validUntil})</div>
+            <div class="actions">
+              <button class="wa" style="border:none;" onclick="sendReminder('${m.phone}','${m.name}',${m.lastFee || 1000},'${m.validUntil}',${diffDays < 0})">Send WA Reminder</button>
+              <button class="green" onclick="openPayModal('${m.phone}')">Record Fee</button>
+            </div>
+          </div>
+        `;
+      });
+    }
+
+    function renderMembers() {
+      const term = document.getElementById("search").value.toLowerCase();
+      const today = getTodayIST();
+      const tbody = document.getElementById("member-list");
+      tbody.innerHTML = "";
+
+      allMembers
+        .filter(m => {
+          const matchesSearch = m.name.toLowerCase().includes(term) || m.phone.includes(term);
+          if (!matchesSearch) return false;
+          if (filterMode === "due") {
+            const diffDays = Math.ceil((new Date(m.validUntil) - new Date(today)) / 86400000);
+            return diffDays <= 5;
+          }
+          if (filterMode === "student") return Boolean(m.isStudent);
+          return true;
+        })
+        .sort((a, b) => a.validUntil.localeCompare(b.validUntil))
+        .forEach(m => {
+          const diffDays = Math.ceil((new Date(m.validUntil) - new Date(today)) / 86400000);
+          let badge = `<span class="badge active">Active (${diffDays}d)</span>`;
+          if (diffDays < 0) badge = `<span class="badge expired">Overdue (${Math.abs(diffDays)}d)</span>`;
+          else if (diffDays <= 5) badge = `<span class="badge soon">Due in ${diffDays}d</span>`;
+
+          const studentBadge = m.isStudent ? `<span class="student-tag">Student</span>` : "";
+          tbody.innerHTML += `
+            <tr>
+              <td><b>${m.name}</b>${studentBadge}<br><span style="color:#64748b; font-size:0.78rem;">${m.phone}</span></td>
+              <td>${m.planName || "1 Month"}<br><span style="color:#64748b; font-size:0.78rem;">₹${m.lastFee || 1000}</span></td>
+              <td>${m.validUntil}</td>
+              <td>${badge}</td>
+              <td class="actions">
+                <button class="green" onclick="openPayModal('${m.phone}')">Record Fee</button>
+                <button class="gray" onclick="manualCheckIn('${m.phone}','${m.name}','${m.validUntil}')">Check-In</button>
+                <button class="wa" style="border:none;" onclick="sendReminder('${m.phone}','${m.name}',${m.lastFee || 1000},'${m.validUntil}',${diffDays < 0})">WA</button>
+              </td>
+            </tr>
+          `;
+        });
+    }
+
+    function initListeners() {
+      unsubMembers = onSnapshot(collection(db, "members"), (snap) => {
+        allMembers = snap.docs.map(d => d.data());
+        renderRenewalAlerts();
+        renderMembers();
+      });
+
+      const payQ = query(collection(db, "payments"), orderBy("createdAt", "desc"), limit(25));
+      unsubPayments = onSnapshot(payQ, (snap) => {
+        const tbody = document.getElementById("payment-list");
+        tbody.innerHTML = "";
+        snap.docs.forEach(d => {
+          const p = d.data();
+          const receiptText = encodeURIComponent(
+            `Hi ${p.name}, we received your gym fee of ₹${p.amount} (${p.planName || "Renewal"}) via ${p.mode}${p.txnId !== "CASH" ? " (Ref: " + p.txnId + ")" : ""}. Your membership is now valid until ${p.validUntil}. Thank you!`
+          );
+          const photoBtn = p.photo
+            ? `<button class="gray" onclick="viewPhoto('${p.photo}')">View Photo</button>`
+            : `<span style="color:#94a3b8; font-size:0.8rem;">No photo</span>`;
+
+          tbody.innerHTML += `
+            <tr>
+              <td>${p.date}</td>
+              <td><b>${p.name}</b><br><span style="color:#64748b; font-size:0.78rem;">${p.phone}</span></td>
+              <td><b>₹${p.amount}</b><br><span style="color:#64748b; font-size:0.78rem;">${p.planName || ""} → ${p.validUntil}</span></td>
+              <td>${p.mode}<br><span style="color:#64748b; font-size:0.78rem;">Ref: ${p.txnId}</span></td>
+              <td class="actions">
+                ${photoBtn}
+                <a class="wa" target="_blank" href="https://wa.me/91${p.phone}?text=${receiptText}">WA Receipt</a>
+              </td>
+            </tr>
+          `;
+        });
+      });
+
+      const today = getTodayIST();
+      const attQ = query(collection(db, "attendance"), where("date", "==", today));
+      unsubAtt = onSnapshot(attQ, (snap) => {
+        const tbody = document.getElementById("att-list");
+        document.getElementById("att-count").textContent = snap.size;
+        tbody.innerHTML = "";
+        snap.docs.map(d => d.data()).forEach(a => {
+          tbody.innerHTML += `
+            <tr>
+              <td>${a.time}</td>
+              <td><b>${a.name}</b></td>
+              <td>${a.phone}</td>
+              <td><span class="badge ${a.feeStatus === "EXPIRED" ? "expired" : (a.feeStatus === "DUE_SOON" ? "soon" : "active")}">${a.feeStatus}</span></td>
+            </tr>
+          `;
+        });
+      });
+    }
+
+    onAuthStateChanged(auth, (user) => {
+      if (user) {
+        lockScreen.style.display = "none";
+        dashboard.style.display = "block";
+        initListeners();
+      } else {
+        if (unsubMembers) unsubMembers();
+        if (unsubPayments) unsubPayments();
+        if (unsubAtt) unsubAtt();
+        lockScreen.style.display = "block";
+        dashboard.style.display = "none";
+      }
+    });
+  </script>
+</body>
+</html>

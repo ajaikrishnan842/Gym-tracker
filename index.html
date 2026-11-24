@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Gym Check-In Kiosk</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <style>
+    * { box-sizing: border-box; font-family: system-ui, -apple-system, sans-serif; }
+    body { margin: 0; background: #0f172a; color: #f8fafc; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; text-align: center; }
+    .card { background: #1e293b; padding: 32px; border-radius: 20px; width: 100%; max-width: 400px; box-shadow: 0 20px 40px rgba(0,0,0,0.4); }
+    h1, h2 { margin: 0 0 6px; }
+    h1 { font-size: 1.6rem; }
+    p.sub { margin: 0 0 24px; color: #94a3b8; font-size: 0.95rem; }
+    input { width: 100%; padding: 12px; margin-bottom: 10px; border-radius: 10px; border: 1px solid #334155; background: #0f172a; color: #fff; font-size: 0.95rem; }
+    button { width: 100%; padding: 12px; border-radius: 10px; border: none; background: #2563eb; color: #fff; font-size: 1rem; font-weight: 600; cursor: pointer; }
+    #login-err { color: #f87171; font-size: 0.85rem; margin-top: 10px; min-height: 18px; }
+    #qr-box { background: #fff; padding: 18px; border-radius: 16px; display: inline-block; margin-bottom: 20px; }
+    .bar-bg { width: 100%; height: 10px; background: #334155; border-radius: 99px; overflow: hidden; margin-bottom: 10px; }
+    #bar { height: 100%; width: 100%; background: #22c55e; transition: width 1s linear; }
+    #timer { font-size: 1.1rem; font-weight: 600; color: #cbd5e1; }
+    #overlay { display: none; padding: 28px 16px; border-radius: 16px; margin-bottom: 12px; }
+    .ok { background: #14532d; border: 2px solid #22c55e; }
+    .soon { background: #713f12; border: 2px solid #eab308; }
+    .warn { background: #7f1d1d; border: 2px solid #ef4444; }
+    .footer-links { margin-top: 24px; display: flex; gap: 18px; align-items: center; }
+    .footer-links a, .footer-links button { background: none; color: #64748b; text-decoration: none; font-size: 0.85rem; padding: 0; width: auto; font-weight: 500; }
+  </style>
+</head>
+<body>
+  <div id="login-card" class="card">
+    <h2>Kiosk Login</h2>
+    <p class="sub">Sign in with your gym owner account</p>
+    <input id="email" type="email" placeholder="Owner Email" />
+    <input id="password" type="password" placeholder="Password" />
+    <button id="login-btn">Start Kiosk</button>
+    <div id="login-err"></div>
+  </div>
+
+  <div id="kiosk-card" class="card" style="display:none;">
+    <h1>Gym Attendance</h1>
+    <p class="sub">Scan with your phone camera to check in</p>
+
+    <div id="overlay"></div>
+
+    <div id="qr-section">
+      <div id="qr-box"><div id="qrcode"></div></div>
+      <div class="bar-bg"><div id="bar"></div></div>
+      <div id="timer">Refreshing in 30s</div>
+    </div>
+  </div>
+
+  <div id="footer" class="footer-links" style="display:none;">
+    <a href="admin.html">Admin Dashboard →</a>
+    <button id="logout-btn">Sign Out</button>
+  </div>
+
+  <script type="module">
+    import { db, auth } from "./firebase-config.js";
+    import { doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-firestore.js";
+    import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-auth.js";
+
+    const DURATION = 30;
+    const currentTokenRef = doc(db, "qr_tokens", "current");
+
+    let countdown = DURATION;
+    let timerId = null;
+    let activeToken = null;
+    let unsubToken = null;
+
+    const loginCard = document.getElementById("login-card");
+    const kioskCard = document.getElementById("kiosk-card");
+    const footer = document.getElementById("footer");
+    const loginErr = document.getElementById("login-err");
+    const qrContainer = document.getElementById("qrcode");
+    const qrSection = document.getElementById("qr-section");
+    const overlay = document.getElementById("overlay");
+    const timerEl = document.getElementById("timer");
+    const barEl = document.getElementById("bar");
+
+    function randomToken() {
+      return "tk_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+    }
+
+    async function generateNewQR() {
+      if (timerId) clearInterval(timerId);
+      overlay.style.display = "none";
+      qrSection.style.display = "block";
+
+      const token = randomToken();
+      activeToken = token;
+
+      await setDoc(currentTokenRef, { token, createdAt: Date.now(), used: false });
+
+      const scanUrl = new URL("scan.html?t=" + token, window.location.href).href;
+      qrContainer.innerHTML = "";
+      new QRCode(qrContainer, { text: scanUrl, width: 240, height: 240 });
+
+      countdown = DURATION;
+      updateBar();
+
+      timerId = setInterval(() => {
+        countdown--;
+        updateBar();
+        if (countdown <= 0) generateNewQR();
+      }, 1000);
+    }
+
+    function updateBar() {
+      timerEl.textContent = `Refreshing in ${countdown}s`;
+      barEl.style.width = `${(countdown / DURATION) * 100}%`;
+      barEl.style.background = countdown <= 8 ? "#f59e0b" : "#22c55e";
+    }
+
+    function showWelcome(data) {
+      qrSection.style.display = "none";
+      overlay.style.display = "block";
+
+      let cls = "ok", title = "✅ Checked In!", msg = `Valid until ${data.validUntil}`;
+      if (data.feeStatus === "EXPIRED") {
+        cls = "warn";
+        title = "⚠️ Fee Overdue";
+        msg = `Expired on ${data.validUntil}. Please renew at desk.`;
+      } else if (data.feeStatus === "DUE_SOON") {
+        cls = "soon";
+        title = "⏳ Fee Due Soon";
+        const d = data.daysLeft;
+        msg = d === 0 ? `Expires today (${data.validUntil}). Please renew at desk.` : `Expires in ${d} day${d === 1 ? "" : "s"} (${data.validUntil}).`;
+      }
+
+      overlay.className = cls;
+      overlay.innerHTML = `
+        <h2 style="margin:0 0 8px;">${title}</h2>
+        <div style="font-size:1.3rem; font-weight:700;">${data.usedBy}</div>
+        <p style="margin:8px 0 0; font-size:0.9rem; opacity:0.95;">${msg}</p>
+      `;
+      setTimeout(generateNewQR, 2500);
+    }
+
+    document.getElementById("login-btn").onclick = async () => {
+      loginErr.textContent = "";
+      try {
+        await signInWithEmailAndPassword(auth, document.getElementById("email").value.trim(), document.getElementById("password").value);
+      } catch {
+        loginErr.textContent = "Invalid email or password.";
+      }
+    };
+
+    document.getElementById("logout-btn").onclick = () => signOut(auth);
+
+    onAuthStateChanged(auth, (user) => {
+      if (user) {
+        loginCard.style.display = "none";
+        kioskCard.style.display = "block";
+        footer.style.display = "flex";
+
+        if (!unsubToken) {
+          unsubToken = onSnapshot(currentTokenRef, (snap) => {
+            const data = snap.data();
+            if (data && data.token === activeToken && data.used) {
+              activeToken = null;
+              clearInterval(timerId);
+              showWelcome(data);
+            }
+          });
+        }
+        generateNewQR();
+      } else {
+        if (timerId) clearInterval(timerId);
+        if (unsubToken) { unsubToken(); unsubToken = null; }
+        activeToken = null;
+        loginCard.style.display = "block";
+        kioskCard.style.display = "none";
+        footer.style.display = "none";
+      }
+    });
+  </script>
+</body>
+</html>
