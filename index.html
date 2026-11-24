@@ -14,7 +14,9 @@
     .gym-logo { width: 96px; height: 96px; object-fit: cover; border-radius: 16px; margin-bottom: 12px; border: 2px solid #334155; }
     h1, h2 { margin: 0 0 4px; }
     h1 { font-size: 1.55rem; letter-spacing: 0.01em; }
-    .gym-meta { margin: 0 0 18px; color: #94a3b8; font-size: 0.9rem; font-weight: 500; }
+    .gym-meta { margin: 0 0 12px; color: #94a3b8; font-size: 0.9rem; font-weight: 500; }
+    .floor-badge { display: inline-flex; align-items: center; gap: 7px; background: rgba(34, 197, 94, 0.14); border: 1px solid rgba(34, 197, 94, 0.45); color: #86efac; padding: 6px 14px; border-radius: 999px; font-size: 0.85rem; font-weight: 700; margin-bottom: 14px; }
+    .floor-dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; }
     p.sub { margin: 0 0 18px; color: #cbd5e1; font-size: 0.92rem; }
     input { width: 100%; padding: 12px; margin-bottom: 10px; border-radius: 10px; border: 1px solid #334155; background: #0f172a; color: #fff; font-size: 0.95rem; }
     button { width: 100%; padding: 12px; border-radius: 10px; border: none; background: #2563eb; color: #fff; font-size: 1rem; font-weight: 600; cursor: pointer; }
@@ -56,6 +58,10 @@
     <img src="logo.png" alt="Fitness Planet Gym" class="gym-logo" onerror="this.style.display='none'" />
     <h1>Fitness Planet Gym</h1>
     <p class="gym-meta">Periye • 📞 8606178119</p>
+    <div class="floor-badge">
+      <span class="floor-dot"></span>
+      <span><span id="kiosk-inside-count">0</span> Members Currently Inside</span>
+    </div>
     <p class="sub">Scan with your phone camera to mark attendance</p>
 
     <div id="overlay"></div>
@@ -88,8 +94,8 @@
   </div>
 
   <script type="module">
-    import { db, auth } from "./firebase-config.js";
-    import { doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-firestore.js";
+    import { db, auth, getTodayIST } from "./firebase-config.js";
+    import { doc, setDoc, onSnapshot, collection, query, where } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-firestore.js";
     import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-auth.js";
 
     const DEFAULT_PIN = "9842";
@@ -107,6 +113,7 @@
     let timerId = null;
     let activeToken = null;
     let unsubToken = null;
+    let unsubFloor = null;
     let wakeLock = null;
     let soundEnabled = true;
     let audioCtx = null;
@@ -125,6 +132,28 @@
     const pinModal = document.getElementById("pin-modal");
     const pinInput = document.getElementById("pin-input");
     const pinErr = document.getElementById("pin-err");
+    const kioskInsideCountEl = document.getElementById("kiosk-inside-count");
+
+    function isCurrentlyInside(attDocData) {
+      if (!attDocData) return false;
+      if (Array.isArray(attDocData.sessions) && attDocData.sessions.length > 0) {
+        return attDocData.sessions.some(s => s.status === "IN" && !s.exitTime);
+      }
+      return attDocData.status === "IN" && !attDocData.exitTime;
+    }
+
+    function startFloorCounter() {
+      if (unsubFloor) unsubFloor();
+      const today = getTodayIST();
+      const q = query(collection(db, "attendance"), where("date", "==", today));
+      unsubFloor = onSnapshot(q, (snap) => {
+        let inside = 0;
+        snap.docs.forEach(d => {
+          if (isCurrentlyInside(d.data())) inside++;
+        });
+        kioskInsideCountEl.textContent = inside;
+      });
+    }
 
     function openPinModal() {
       pinErr.textContent = "";
@@ -315,6 +344,7 @@
         kioskCard.style.display = "block";
         footer.style.display = "flex";
         requestWakeLock();
+        startFloorCounter();
 
         if (!unsubToken) {
           unsubToken = onSnapshot(currentTokenRef, (snap) => {
@@ -330,6 +360,7 @@
       } else {
         if (timerId) clearInterval(timerId);
         if (unsubToken) { unsubToken(); unsubToken = null; }
+        if (unsubFloor) { unsubFloor(); unsubFloor = null; }
         if (wakeLock) { wakeLock.release(); wakeLock = null; }
         activeToken = null;
         loginCard.style.display = "block";
