@@ -27,8 +27,17 @@
     .ok { background: #14532d; border: 2px solid #22c55e; }
     .soon { background: #713f12; border: 2px solid #eab308; }
     .warn { background: #7f1d1d; border: 2px solid #ef4444; }
-    .footer-links { margin-top: 22px; display: flex; gap: 18px; align-items: center; flex-wrap: wrap; justify-content: center; }
-    .footer-links a, .footer-links button { background: none; color: #94a3b8; text-decoration: none; font-size: 0.85rem; padding: 0; width: auto; font-weight: 500; }
+    .footer-links { margin-top: 22px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; justify-content: center; }
+    .footer-btn { background: #1e293b; color: #e2e8f0; border: 1px solid #334155; border-radius: 10px; padding: 8px 14px; width: auto; font-size: 0.85rem; font-weight: 600; }
+    .footer-btn.ghost { background: none; border-color: transparent; color: #94a3b8; padding: 8px 10px; }
+
+    /* 4-Digit PIN Modal */
+    .pin-bg { display: none; position: fixed; inset: 0; background: rgba(2, 6, 23, 0.75); align-items: center; justify-content: center; padding: 20px; z-index: 50; }
+    .pin-card { background: #1e293b; border: 1px solid #334155; border-radius: 18px; padding: 24px; width: 100%; max-width: 320px; text-align: center; box-shadow: 0 20px 40px rgba(0,0,0,0.5); }
+    .pin-input { text-align: center; font-size: 1.5rem; letter-spacing: 0.55rem; font-weight: 700; padding: 12px; margin: 14px 0 8px; }
+    .pin-err { color: #f87171; font-size: 0.84rem; min-height: 18px; margin-bottom: 10px; }
+    .pin-actions { display: flex; gap: 10px; }
+    .pin-actions button.cancel { background: #334155; color: #e2e8f0; }
   </style>
 </head>
 <body>
@@ -58,15 +67,32 @@
   </div>
 
   <div id="footer" class="footer-links" style="display:none;">
-    <button id="sound-btn">🔊 Sound: On</button>
-    <a href="admin.html">Admin Dashboard →</a>
-    <button id="logout-btn">Sign Out</button>
+    <button id="sound-btn" class="footer-btn ghost">🔊 Sound: On</button>
+    <button id="admin-btn" class="footer-btn">🔒 Admin Dashboard</button>
+    <button id="logout-btn" class="footer-btn ghost">Sign Out</button>
+  </div>
+
+  <!-- 4-Digit Admin PIN Modal -->
+  <div id="pin-modal" class="pin-bg">
+    <div class="pin-card">
+      <h3 style="margin:0 0 4px;">Admin PIN</h3>
+      <p style="margin:0; color:#94a3b8; font-size:0.86rem;">Enter 4-digit PIN to open dashboard</p>
+      <input id="pin-input" class="pin-input" type="password" inputmode="numeric" maxlength="4" pattern="\d{4}" placeholder="••••" autocomplete="off" />
+      <div id="pin-err" class="pin-err"></div>
+      <div class="pin-actions">
+        <button id="pin-submit">Unlock</button>
+        <button id="pin-cancel" class="cancel">Cancel</button>
+      </div>
+    </div>
   </div>
 
   <script type="module">
     import { db, auth } from "./firebase-config.js";
     import { doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-firestore.js";
     import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-auth.js";
+
+    // CHANGE THIS TO YOUR OWN 4-DIGIT ADMIN PIN
+    const ADMIN_PIN = "1234";
 
     const DURATION = 30;
     const currentTokenRef = doc(db, "qr_tokens", "current");
@@ -89,8 +115,51 @@
     const timerEl = document.getElementById("timer");
     const barEl = document.getElementById("bar");
     const soundBtn = document.getElementById("sound-btn");
+    const adminBtn = document.getElementById("admin-btn");
+    const pinModal = document.getElementById("pin-modal");
+    const pinInput = document.getElementById("pin-input");
+    const pinErr = document.getElementById("pin-err");
 
-    // Unlock browser audio on first tap
+    function openPinModal() {
+      pinErr.textContent = "";
+      pinInput.value = "";
+      pinModal.style.display = "flex";
+      setTimeout(() => pinInput.focus(), 50);
+    }
+
+    function closePinModal() {
+      pinModal.style.display = "none";
+      pinInput.value = "";
+      pinErr.textContent = "";
+    }
+
+    function verifyPin() {
+      const entered = pinInput.value.replace(/\D/g, "");
+      if (entered.length !== 4) {
+        pinErr.textContent = "Enter a 4-digit PIN.";
+        return;
+      }
+      if (entered !== ADMIN_PIN) {
+        pinErr.textContent = "Incorrect PIN.";
+        pinInput.value = "";
+        pinInput.focus();
+        return;
+      }
+      sessionStorage.setItem("fp_admin_pin_ok", "1");
+      window.location.href = "admin.html";
+    }
+
+    adminBtn.onclick = openPinModal;
+    document.getElementById("pin-cancel").onclick = closePinModal;
+    document.getElementById("pin-submit").onclick = verifyPin;
+    pinInput.onkeydown = (e) => {
+      if (e.key === "Enter") verifyPin();
+      if (e.key === "Escape") closePinModal();
+    };
+    pinModal.onclick = (e) => {
+      if (e.target === pinModal) closePinModal();
+    };
+
     function unlockAudio() {
       if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       if (audioCtx.state === "suspended") audioCtx.resume();
@@ -121,21 +190,17 @@
       if (!soundEnabled) return;
       unlockAudio();
       if (feeStatus === "EXPIRED") {
-        // Low double buzz
         beep(220, 0.22, 0, "sawtooth", 0.2);
         beep(180, 0.30, 0.28, "sawtooth", 0.2);
       } else if (feeStatus === "DUE_SOON") {
-        // Neutral double beep
         beep(660, 0.14, 0, "triangle", 0.25);
         beep(660, 0.18, 0.20, "triangle", 0.25);
       } else {
-        // Pleasant rising chime
         beep(880, 0.14, 0, "sine", 0.25);
         beep(1174, 0.22, 0.15, "sine", 0.25);
       }
     }
 
-    // Keep screen awake while kiosk is active
     async function requestWakeLock() {
       if (!("wakeLock" in navigator)) return;
       try {
@@ -247,9 +312,10 @@
         footer.style.display = "none";
       }
     });
+
     if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("./sw.js").catch(() => {});
-}
+      navigator.serviceWorker.register("./sw.js").catch(() => {});
+    }
   </script>
 </body>
 </html>
