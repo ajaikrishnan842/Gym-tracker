@@ -14,6 +14,7 @@
     .alert-item { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid #fde68a; flex-wrap: wrap; }
     h2, h3 { margin-top: 0; }
     .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+    .pin-grid { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
     .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-top: 12px; }
     .stat-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px; }
     .stat-label { font-size: 0.78rem; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: 0.03em; }
@@ -51,15 +52,29 @@
   </style>
 </head>
 <body>
-  <div id="lock-screen" class="card" style="max-width:360px; margin:80px auto; text-align:center;">
+  <!-- 4-Digit PIN Lock -->
+  <div id="pin-screen" class="card" style="max-width:360px; margin:80px auto; text-align:center;">
     <h2>Fitness Planet Gym</h2>
-    <p style="margin:-8px 0 16px; color:#64748b; font-size:0.88rem;">Periye • Admin Login</p>
+    <p style="margin:-8px 0 16px; color:#64748b; font-size:0.88rem;">Periye • Enter 4-Digit Admin PIN</p>
+    <input id="admin-pin-input" type="password" inputmode="numeric" maxlength="4" pattern="\d{4}" placeholder="••••" autocomplete="off" style="width:100%; margin-bottom:10px; text-align:center; font-size:1.4rem; letter-spacing:0.5rem; font-weight:700;" />
+    <button id="admin-pin-btn" style="width:100%;">Unlock Admin</button>
+    <div id="admin-pin-err" style="color:#dc2626; font-size:0.85rem; margin-top:10px; min-height:18px;"></div>
+    <div style="margin-top:14px;">
+      <a href="index.html" style="color:#2563eb; font-size:0.86rem; font-weight:600; text-decoration:none;">← Back to Kiosk</a>
+    </div>
+  </div>
+
+  <!-- Owner Login Screen -->
+  <div id="lock-screen" class="card" style="max-width:360px; margin:80px auto; text-align:center; display:none;">
+    <h2>Fitness Planet Gym</h2>
+    <p style="margin:-8px 0 16px; color:#64748b; font-size:0.88rem;">Periye • Owner Sign In</p>
     <input id="email-input" type="email" placeholder="Owner Email" style="width:100%; margin-bottom:10px;" />
     <input id="pass-input" type="password" placeholder="Password" style="width:100%; margin-bottom:10px;" />
     <button id="login-btn" style="width:100%;">Sign In</button>
     <div id="login-err"></div>
   </div>
 
+  <!-- Dashboard -->
   <div id="dashboard" style="display:none;">
     <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:16px;">
       <h2 style="margin:0;">Fitness Planet Gym, Periye — Admin</h2>
@@ -183,6 +198,18 @@
         </table>
       </div>
     </div>
+
+    <!-- Admin PIN Settings -->
+    <div class="card">
+      <h3>4-Digit Admin PIN</h3>
+      <p id="pin-status-text" style="margin:0 0 12px; color:#475569; font-size:0.88rem;"></p>
+      <div class="pin-grid">
+        <input id="new-pin-input" type="password" inputmode="numeric" maxlength="4" pattern="\d{4}" placeholder="New 4-digit PIN" autocomplete="off" style="width:165px; text-align:center; letter-spacing:0.25rem; font-weight:600;" />
+        <button id="save-pin-btn">Set / Change PIN</button>
+        <button id="reset-pin-btn" class="gray">Reset PIN to 9842</button>
+      </div>
+      <div id="pin-manage-msg" style="font-size:0.85rem; margin-top:10px; min-height:18px;"></div>
+    </div>
   </div>
 
   <!-- Record Payment Modal (Includes Custom Plan Option) -->
@@ -290,6 +317,97 @@
     import { doc, setDoc, updateDoc, deleteDoc, addDoc, collection, getDocs, onSnapshot, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-firestore.js";
     import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-auth.js";
 
+    const DEFAULT_PIN = "9842";
+    const PIN_STORAGE_KEY = "fp_admin_custom_pin";
+
+    function getActivePin() {
+      const saved = localStorage.getItem(PIN_STORAGE_KEY);
+      return saved && /^\d{4}$/.test(saved) ? saved : DEFAULT_PIN;
+    }
+
+    const pinScreen = document.getElementById("pin-screen");
+    const adminPinInput = document.getElementById("admin-pin-input");
+    const adminPinErr = document.getElementById("admin-pin-err");
+    const lockScreen = document.getElementById("lock-screen");
+    const dashboard = document.getElementById("dashboard");
+    const pinStatusText = document.getElementById("pin-status-text");
+    const newPinInput = document.getElementById("new-pin-input");
+    const pinManageMsg = document.getElementById("pin-manage-msg");
+
+    let pinVerified = sessionStorage.getItem("fp_admin_pin_ok") === "1";
+    let currentAuthUser = null;
+
+    function updatePinStatusUI() {
+      const active = getActivePin();
+      const isDefault = active === DEFAULT_PIN;
+      pinStatusText.innerHTML = isDefault
+        ? `Currently using default PIN (<b>${DEFAULT_PIN}</b>) on this browser.`
+        : `Custom 4-digit PIN is active on this browser (default reset value: <b>${DEFAULT_PIN}</b>).`;
+    }
+
+    function syncAdminScreens() {
+      if (!pinVerified) {
+        pinScreen.style.display = "block";
+        lockScreen.style.display = "none";
+        dashboard.style.display = "none";
+        return;
+      }
+      pinScreen.style.display = "none";
+      if (currentAuthUser) {
+        lockScreen.style.display = "none";
+        dashboard.style.display = "block";
+        updatePinStatusUI();
+      } else {
+        lockScreen.style.display = "block";
+        dashboard.style.display = "none";
+      }
+    }
+
+    document.getElementById("admin-pin-btn").onclick = () => {
+      const val = adminPinInput.value.replace(/\D/g, "");
+      if (val.length !== 4) {
+        adminPinErr.textContent = "Enter a 4-digit PIN.";
+        return;
+      }
+      if (val !== getActivePin()) {
+        adminPinErr.textContent = "Incorrect PIN.";
+        adminPinInput.value = "";
+        adminPinInput.focus();
+        return;
+      }
+      adminPinErr.textContent = "";
+      pinVerified = true;
+      sessionStorage.setItem("fp_admin_pin_ok", "1");
+      syncAdminScreens();
+      if (currentAuthUser) initListeners();
+    };
+
+    adminPinInput.onkeydown = (e) => {
+      if (e.key === "Enter") document.getElementById("admin-pin-btn").click();
+    };
+
+    document.getElementById("save-pin-btn").onclick = () => {
+      const nextPin = newPinInput.value.replace(/\D/g, "");
+      if (!/^\d{4}$/.test(nextPin)) {
+        pinManageMsg.style.color = "#dc2626";
+        pinManageMsg.textContent = "PIN must be exactly 4 digits.";
+        return;
+      }
+      localStorage.setItem(PIN_STORAGE_KEY, nextPin);
+      newPinInput.value = "";
+      pinManageMsg.style.color = "#16a34a";
+      pinManageMsg.textContent = "Custom 4-digit PIN updated for this browser.";
+      updatePinStatusUI();
+    };
+
+    document.getElementById("reset-pin-btn").onclick = () => {
+      localStorage.setItem(PIN_STORAGE_KEY, DEFAULT_PIN);
+      newPinInput.value = "";
+      pinManageMsg.style.color = "#1d4ed8";
+      pinManageMsg.textContent = `PIN reset to default (${DEFAULT_PIN}).`;
+      updatePinStatusUI();
+    };
+
     const DEFAULT_PLANS = [
       { id: "reg_1m", name: "1 Month", days: 30, fee: 1000, isStudent: false },
       { id: "reg_3m", name: "3 Months", days: 90, fee: 2700, isStudent: false },
@@ -297,8 +415,6 @@
       { id: "stu_3m", name: "Student - 3 Months", days: 90, fee: 1800, isStudent: true }
     ];
 
-    const lockScreen = document.getElementById("lock-screen");
-    const dashboard = document.getElementById("dashboard");
     const loginErr = document.getElementById("login-err");
     const mPlan = document.getElementById("m-plan");
     const mFee = document.getElementById("m-fee");
@@ -319,6 +435,7 @@
     const attDateInput = document.getElementById("att-date");
 
     let unsubMembers = null, unsubAtt = null, unsubPayments = null, unsubRev = null, unsubPlans = null;
+    let listenersActive = false;
     let allPlans = [...DEFAULT_PLANS];
     let allMembers = [];
     let currentMonthPayments = [];
@@ -407,7 +524,6 @@
       }
     }
 
-    // CSV Download Helper
     function downloadCSV(filename, headers, rows) {
       const esc = (v) => {
         const s = String(v ?? "");
@@ -546,7 +662,6 @@
       document.getElementById("m-phone").value = "";
     };
 
-    // Edit / Delete Member Modal
     window.openEditModal = (phone) => {
       editingMember = allMembers.find(m => m.phone === phone);
       if (!editingMember) return;
@@ -584,7 +699,6 @@
       editModal.style.display = "none";
     };
 
-    // Record Payment Modal
     window.openPayModal = (phone) => {
       selectedMember = allMembers.find(m => m.phone === phone);
       if (!selectedMember) return;
@@ -805,7 +919,19 @@
     revMonthInput.onchange = () => { if (revMonthInput.value) listenMonthlyRevenue(revMonthInput.value); };
     attDateInput.onchange = () => { if (attDateInput.value) listenAttendance(attDateInput.value); };
 
+    function stopListeners() {
+      if (unsubPlans) { unsubPlans(); unsubPlans = null; }
+      if (unsubMembers) { unsubMembers(); unsubMembers = null; }
+      if (unsubPayments) { unsubPayments(); unsubPayments = null; }
+      if (unsubAtt) { unsubAtt(); unsubAtt = null; }
+      if (unsubRev) { unsubRev(); unsubRev = null; }
+      listenersActive = false;
+    }
+
     async function initListeners() {
+      if (listenersActive) return;
+      listenersActive = true;
+
       const today = getTodayIST();
       revMonthInput.value = today.slice(0, 7);
       attDateInput.value = today;
@@ -861,20 +987,18 @@
     }
 
     onAuthStateChanged(auth, (user) => {
-      if (user) {
-        lockScreen.style.display = "none";
-        dashboard.style.display = "block";
+      currentAuthUser = user;
+      syncAdminScreens();
+      if (user && pinVerified) {
         initListeners();
-      } else {
-        if (unsubPlans) unsubPlans();
-        if (unsubMembers) unsubMembers();
-        if (unsubPayments) unsubPayments();
-        if (unsubAtt) unsubAtt();
-        if (unsubRev) unsubRev();
-        lockScreen.style.display = "block";
-        dashboard.style.display = "none";
+      } else if (!user) {
+        stopListeners();
       }
     });
+
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("./sw.js").catch(() => {});
+    }
   </script>
 </body>
 </html>
