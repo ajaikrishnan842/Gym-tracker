@@ -72,7 +72,6 @@
 
           if (tData.token !== token) throw new Error("QR expired. Please scan the fresh QR on screen.");
           if (tData.used) throw new Error("This QR was already used. Scan the fresh QR on screen.");
-          if (Date.now() - tData.createdAt > 35000) throw new Error("QR expired (30s limit). Scan the fresh QR.");
           if (!memberSnap.exists()) throw new Error("Mobile number not registered. Please ask reception.");
           if (attSnap.exists()) throw new Error("You have already marked attendance today!");
 
