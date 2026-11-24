@@ -171,7 +171,7 @@
       </div>
     </div>
 
-    <!-- Attendance with Date Picker -->
+    <!-- Attendance with Entry / Exit & Date Picker -->
     <div class="card">
       <div class="toolbar">
         <h3 style="margin:0;">Attendance (<span id="att-count">0</span>)</h3>
@@ -182,7 +182,7 @@
       </div>
       <div style="overflow-x:auto;">
         <table>
-          <thead><tr><th>Time</th><th>Name</th><th>Mobile</th><th>Fee Status</th></tr></thead>
+          <thead><tr><th>Entry</th><th>Exit</th><th>Name</th><th>Session / Fee</th></tr></thead>
           <tbody id="att-list"></tbody>
         </table>
       </div>
@@ -561,8 +561,21 @@
       if (!currentDayAttendance.length) return alert("No attendance records for this date.");
       downloadCSV(
         `attendance-${attDateInput.value}.csv`,
-        ["Date", "Time", "Name", "Mobile", "Fee Status", "Method"],
-        currentDayAttendance.map(a => [a.date, a.time, a.name, a.phone, a.feeStatus, a.tokenUsed === "MANUAL" ? "Manual" : "QR"])
+        ["Date", "Entry Time", "Exit Time", "Duration", "Name", "Mobile", "Session Status", "Fee Status", "Method"],
+        currentDayAttendance.map(a => {
+          const method = a.tokenUsed === "MANUAL" ? "Manual" : "QR";
+          return [
+            a.date,
+            a.entryTime || a.time || "",
+            a.exitTime || "",
+            a.duration || "",
+            a.name,
+            a.phone,
+            a.status || (a.exitTime ? "OUT" : "IN"),
+            a.feeStatus,
+            method
+          ];
+        })
       );
     };
 
@@ -776,7 +789,8 @@
       const today = getTodayIST();
       const istTime = new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" });
       await setDoc(doc(db, "attendance", `${today}_${phone}`), {
-        date: today, time: istTime, phone, name,
+        date: today, time: istTime, entryTime: istTime, entryAt: Date.now(),
+        exitTime: "", exitAt: null, status: "IN", phone, name,
         feeStatus: today > validUntil ? "EXPIRED" : "ACTIVE", tokenUsed: "MANUAL"
       });
     };
@@ -897,19 +911,27 @@
       unsubAtt = onSnapshot(q, (snap) => {
         const tbody = document.getElementById("att-list");
         document.getElementById("att-count").textContent = snap.size;
-        currentDayAttendance = snap.docs.map(d => d.data());
+        currentDayAttendance = snap.docs.map(d => d.data()).sort((a, b) => (a.entryAt || 0) - (b.entryAt || 0));
         tbody.innerHTML = "";
         if (snap.empty) {
           tbody.innerHTML = `<tr><td colspan="4" style="color:#94a3b8; text-align:center;">No check-ins on ${dateStr}</td></tr>`;
           return;
         }
         currentDayAttendance.forEach(a => {
+          const entryT = a.entryTime || a.time || "—";
+          const sessionStatus = a.status || (a.exitTime ? "OUT" : "IN");
+          const exitT = a.exitTime || (sessionStatus === "IN" ? "Still inside" : "—");
+          const sessionBadge = sessionStatus === "AUTO_CLOSED"
+            ? `<span class="badge soon">AUTO_CLOSED</span> `
+            : (sessionStatus === "OUT" ? `<span class="badge active">OUT</span> ` : `<span class="badge active">IN</span> `);
+          const feeBadgeClass = a.feeStatus === "EXPIRED" ? "expired" : (a.feeStatus === "DUE_SOON" ? "soon" : "active");
+
           tbody.innerHTML += `
             <tr>
-              <td>${a.time}</td>
-              <td><b>${a.name}</b></td>
-              <td>${a.phone}</td>
-              <td><span class="badge ${a.feeStatus === "EXPIRED" ? "expired" : (a.feeStatus === "DUE_SOON" ? "soon" : "active")}">${a.feeStatus}</span></td>
+              <td><b>${entryT}</b></td>
+              <td>${exitT}${a.duration ? ` <span style="color:#64748b; font-size:0.78rem;">(${a.duration})</span>` : ""}</td>
+              <td><b>${a.name}</b><br><span style="color:#64748b; font-size:0.78rem;">${a.phone}</span></td>
+              <td>${sessionBadge}<span class="badge ${feeBadgeClass}">${a.feeStatus}</span></td>
             </tr>
           `;
         });
