@@ -39,6 +39,7 @@
     import { db, getTodayIST } from "./firebase-config.js";
     import { doc, runTransaction, collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-firestore.js";
 
+    const MAX_DAILY_SESSIONS = 2;
     const params = new URLSearchParams(window.location.search);
     const token = params.get("t");
     const formArea = document.getElementById("form-area");
@@ -56,6 +57,32 @@
       const h = Math.floor(mins / 60);
       const m = mins % 60;
       return h > 0 ? `${h}h ${m}m` : `${m}m`;
+    }
+
+    function normalizeSessions(attData) {
+      if (!attData) return [];
+      if (Array.isArray(attData.sessions) && attData.sessions.length > 0) {
+        return attData.sessions.map((s, i) => ({
+          sessionNum: s.sessionNum || i + 1,
+          entryTime: s.entryTime || "",
+          entryAt: s.entryAt || null,
+          exitTime: s.exitTime || "",
+          exitAt: s.exitAt || null,
+          duration: s.duration || "",
+          status: s.status || (s.exitTime ? "OUT" : "IN")
+        }));
+      }
+      const entryT = attData.entryTime || attData.time || "";
+      if (!entryT) return [];
+      return [{
+        sessionNum: 1,
+        entryTime: entryT,
+        entryAt: attData.entryAt || null,
+        exitTime: attData.exitTime || "",
+        exitAt: attData.exitAt || null,
+        duration: attData.duration || "",
+        status: attData.status || (attData.exitTime ? "OUT" : "IN")
+      }];
     }
 
     async function findUnclosedPreviousAttendance(phone, today) {
@@ -112,37 +139,72 @@
           if (daysLeft < 0) feeStatus = "EXPIRED";
           else if (daysLeft <= 5) feeStatus = "DUE_SOON";
 
-          let closedPreviousDates = [];
+          const closedPreviousDates = [];
           staleSnaps.forEach((sSnap, idx) => {
-            if (sSnap.exists() && sSnap.data().status === "IN") {
+            if (sSnap.exists()) {
               const prevData = sSnap.data();
-              closedPreviousDates.push(prevData.date);
-              tx.update(staleRefs[idx], {
-                status: "AUTO_CLOSED",
-                exitTime: prevData.exitTime || "Forgot Exit",
-                autoClosedOn: today,
-                lastTokenUsed: token
+              const prevSessions = normalizeSessions(prevData);
+              let closedAny = false;
+              const updatedPrev = prevSessions.map(s => {
+                if (s.status === "IN" && !s.exitTime) {
+                  closedAny = true;
+                  return { ...s, status: "AUTO_CLOSED", exitTime: "Forgot Exit" };
+                }
+                return s;
               });
+              if (closedAny || prevData.status === "IN") {
+                closedPreviousDates.push(prevData.date);
+                const lastPrev = updatedPrev[updatedPrev.length - 1];
+                tx.update(staleRefs[idx], {
+                  sessions: updatedPrev,
+                  status: "AUTO_CLOSED",
+                  exitTime: lastPrev?.exitTime || "Forgot Exit",
+                  autoClosedOn: today,
+                  lastTokenUsed: token
+                });
+              }
             }
           });
 
-          // If today's check-in already exists: mark EXIT on first exit scan
-          if (todayAttSnap.exists()) {
-            const attData = todayAttSnap.data();
-            if (attData.exitTime) {
-              throw new Error(`Exit already marked today at ${attData.exitTime}.`);
-            }
-            const duration = formatDuration(attData.entryAt || nowMs, nowMs);
-            tx.update(todayAttRef, {
+          const existingSessions = todayAttSnap.exists() ? normalizeSessions(todayAttSnap.data()) : [];
+          const openIdx = existingSessions.findIndex(s => s.status === "IN" && !s.exitTime);
+
+          // Case A: Currently inside an open session -> mark EXIT for that session
+          if (openIdx !== -1) {
+            const openSess = existingSessions[openIdx];
+            const duration = formatDuration(openSess.entryAt || nowMs, nowMs);
+            const closedSess = {
+              ...openSess,
               exitTime: istTime,
               exitAt: nowMs,
-              status: "OUT",
               duration: duration || "",
+              status: "OUT"
+            };
+            const nextSessions = [...existingSessions];
+            nextSessions[openIdx] = closedSess;
+
+            const hasMoreSessions = nextSessions.length < MAX_DAILY_SESSIONS;
+            tx.set(todayAttRef, {
+              date: today,
+              time: nextSessions[0].entryTime,
+              entryTime: nextSessions[0].entryTime,
+              entryAt: nextSessions[0].entryAt || nowMs,
+              exitTime: istTime,
+              exitAt: nowMs,
+              duration: duration || "",
+              status: hasMoreSessions ? "OUT" : "COMPLETED",
+              sessions: nextSessions,
+              phone,
+              name: member.name,
+              feeStatus,
+              tokenUsed: nextSessions[0].tokenUsed || token,
               lastTokenUsed: token
-            });
+            }, { merge: true });
+
             tx.update(tokenRef, {
               used: true,
               actionType: "EXIT",
+              sessionNum: closedSess.sessionNum,
               usedBy: member.name,
               scanTime: istTime,
               duration,
@@ -150,10 +212,12 @@
               daysLeft,
               validUntil: member.validUntil
             });
+
             return {
               mode: "EXIT",
+              sessionNum: closedSess.sessionNum,
               name: member.name,
-              entryTime: attData.time || attData.entryTime || "",
+              entryTime: closedSess.entryTime,
               exitTime: istTime,
               duration,
               validUntil: member.validUntil,
@@ -163,25 +227,44 @@
             };
           }
 
-          // Otherwise mark today's ENTRY
-          tx.set(todayAttRef, {
-            date: today,
-            time: istTime,
+          // Case B: No open session -> check if daily session limit (2) is reached
+          if (existingSessions.length >= MAX_DAILY_SESSIONS) {
+            throw new Error(`Maximum ${MAX_DAILY_SESSIONS} entry/exit sessions per day already completed.`);
+          }
+
+          // Case C: Start a new ENTRY session (Session 1 or Session 2)
+          const sessionNum = existingSessions.length + 1;
+          const newSess = {
+            sessionNum,
             entryTime: istTime,
             entryAt: nowMs,
             exitTime: "",
             exitAt: null,
+            duration: "",
+            status: "IN"
+          };
+          const nextSessions = [...existingSessions, newSess];
+
+          tx.set(todayAttRef, {
+            date: today,
+            time: sessionNum === 1 ? istTime : (todayAttSnap.data()?.time || istTime),
+            entryTime: sessionNum === 1 ? istTime : (todayAttSnap.data()?.entryTime || istTime),
+            entryAt: sessionNum === 1 ? nowMs : (todayAttSnap.data()?.entryAt || nowMs),
+            exitTime: "",
+            exitAt: null,
             status: "IN",
+            sessions: nextSessions,
             phone,
             name: member.name,
             feeStatus,
             tokenUsed: token,
             lastTokenUsed: token
-          });
+          }, { merge: true });
 
           tx.update(tokenRef, {
             used: true,
             actionType: "ENTRY",
+            sessionNum,
             usedBy: member.name,
             scanTime: istTime,
             feeStatus,
@@ -191,6 +274,7 @@
 
           return {
             mode: "ENTRY",
+            sessionNum,
             name: member.name,
             entryTime: istTime,
             validUntil: member.validUntil,
@@ -209,17 +293,18 @@
 
         if (res.mode === "EXIT") {
           const durText = res.duration ? `<br>Duration: <b>${res.duration}</b>` : "";
-          showMsg("out", `👋 Bye, <b>${res.name}</b>!<br><br>Entry: <b>${res.entryTime || "—"}</b> • Exit: <b>${res.exitTime}</b>${durText}${autoNote}`);
+          showMsg("out", `👋 Check Out — <b>${res.name}</b> (Session ${res.sessionNum})<br><br>Entry: <b>${res.entryTime || "—"}</b> • Exit: <b>${res.exitTime}</b>${durText}${autoNote}`);
           return;
         }
 
+        const sessTag = `Session ${res.sessionNum} of ${MAX_DAILY_SESSIONS}`;
         if (res.feeStatus === "EXPIRED") {
-          showMsg("warning", `✅ Entry Marked for <b>${res.name}</b> at <b>${res.entryTime}</b>${autoNote}<br><br>⚠️ <b>Fee Expired on ${res.validUntil}</b>.<br>Please renew your membership at reception.`);
+          showMsg("warning", `✅ Entry Marked for <b>${res.name}</b> (${sessTag}) at <b>${res.entryTime}</b>${autoNote}<br><br>⚠️ <b>Fee Expired on ${res.validUntil}</b>.<br>Please renew your membership at reception.`);
         } else if (res.feeStatus === "DUE_SOON") {
           const dueText = res.daysLeft === 0 ? "expires <b>today</b>" : `expires in <b>${res.daysLeft} day${res.daysLeft === 1 ? "" : "s"}</b>`;
-          showMsg("soon", `✅ Welcome, <b>${res.name}</b>! (Entry: <b>${res.entryTime}</b>)${autoNote}<br><br>⏳ Reminder: Your plan ${dueText} (<b>${res.validUntil}</b>).<br>Please renew soon at reception.`);
+          showMsg("soon", `✅ Welcome, <b>${res.name}</b>! (${sessTag} • Entry: <b>${res.entryTime}</b>)${autoNote}<br><br>⏳ Reminder: Your plan ${dueText} (<b>${res.validUntil}</b>).<br>Please renew soon at reception.`);
         } else {
-          showMsg("success", `✅ Welcome, <b>${res.name}</b>! (Entry: <b>${res.entryTime}</b>)${autoNote}<br><br>Plan valid until: <b>${res.validUntil}</b>`);
+          showMsg("success", `✅ Welcome, <b>${res.name}</b>! (${sessTag} • Entry: <b>${res.entryTime}</b>)${autoNote}<br><br>Plan valid until: <b>${res.validUntil}</b>`);
         }
       } catch (err) {
         formArea.style.display = "block";
