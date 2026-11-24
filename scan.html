@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Fitness Planet Gym — Check-In</title>
+  <title>Fitness Planet Gym — Check-In / Out</title>
   <style>
     * { box-sizing: border-box; font-family: system-ui, -apple-system, sans-serif; }
     body { margin: 0; background: #f1f5f9; color: #0f172a; display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
@@ -14,6 +14,7 @@
     button { width: 100%; padding: 14px; font-size: 1rem; font-weight: 600; background: #2563eb; color: #fff; border: none; border-radius: 10px; cursor: pointer; }
     .status { padding: 16px; border-radius: 12px; margin-top: 16px; font-weight: 500; line-height: 1.45; }
     .success { background: #dcfce7; color: #166534; }
+    .out { background: #dbeafe; color: #1e40af; border: 1.5px solid #60a5fa; }
     .soon { background: #fef9c3; color: #854d0e; border: 1.5px solid #eab308; }
     .warning { background: #fef2f2; color: #991b1b; border: 1.5px solid #ef4444; }
     .error { background: #fee2e2; color: #991b1b; }
@@ -28,7 +29,7 @@
     <div id="form-area">
       <p style="color:#475569; margin:0; font-size:0.92rem;">Enter your registered 10-digit mobile number (saved for future visits):</p>
       <input id="phone" type="tel" maxlength="10" placeholder="9876543210" />
-      <button id="submit-btn">Mark Attendance</button>
+      <button id="submit-btn">Mark Entry / Exit</button>
     </div>
     <div id="result"></div>
     <button id="reset-phone" class="link-btn" style="display:none;">Not your number? Change mobile</button>
@@ -36,7 +37,7 @@
 
   <script type="module">
     import { db, getTodayIST } from "./firebase-config.js";
-    import { doc, runTransaction } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-firestore.js";
+    import { doc, runTransaction, collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-firestore.js";
 
     const params = new URLSearchParams(window.location.search);
     const token = params.get("t");
@@ -49,27 +50,51 @@
       resultEl.innerHTML = `<div class="status ${type}">${html}</div>`;
     }
 
-    async function markAttendance(phone) {
+    function formatDuration(startMs, endMs) {
+      if (!startMs || !endMs || endMs <= startMs) return "";
+      const mins = Math.round((endMs - startMs) / 60000);
+      const h = Math.floor(mins / 60);
+      const m = mins % 60;
+      return h > 0 ? `${h}h ${m}m` : `${m}m`;
+    }
+
+    async function findUnclosedPreviousAttendance(phone, today) {
+      const q = query(
+        collection(db, "attendance"),
+        where("phone", "==", phone),
+        where("status", "==", "IN")
+      );
+      const snap = await getDocs(q);
+      return snap.docs.filter(d => (d.data().date || "") < today);
+    }
+
+    async function processScan(phone) {
       if (!token) return showMsg("error", "No QR token found. Please scan the QR at reception.");
       if (!/^\d{10}$/.test(phone)) return showMsg("error", "Please enter a valid 10-digit mobile number.");
 
       formArea.style.display = "none";
       showMsg("", "Verifying QR...");
 
+      const nowMs = Date.now();
       const today = getTodayIST();
-      const istTime = new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" });
+      const istTime = new Date(nowMs).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" });
 
       try {
+        const staleDocs = await findUnclosedPreviousAttendance(phone, today);
+        const staleRefs = staleDocs.map(d => d.ref);
+
         const res = await runTransaction(db, async (tx) => {
           const tokenRef = doc(db, "qr_tokens", "current");
           const memberRef = doc(db, "members", phone);
-          const attRef = doc(db, "attendance", `${today}_${phone}`);
+          const todayAttRef = doc(db, "attendance", `${today}_${phone}`);
 
-          const [tokenSnap, memberSnap, attSnap] = await Promise.all([
+          const reads = [
             tx.get(tokenRef),
             tx.get(memberRef),
-            tx.get(attRef)
-          ]);
+            tx.get(todayAttRef),
+            ...staleRefs.map(ref => tx.get(ref))
+          ];
+          const [tokenSnap, memberSnap, todayAttSnap, ...staleSnaps] = await Promise.all(reads);
 
           if (!tokenSnap.exists()) throw new Error("Kiosk QR is not active. Ask reception.");
           const tData = tokenSnap.data();
@@ -77,7 +102,6 @@
           if (tData.token !== token) throw new Error("QR expired. Please scan the fresh QR on screen.");
           if (tData.used) throw new Error("This QR was already used. Scan the fresh QR on screen.");
           if (!memberSnap.exists()) throw new Error("Mobile number not registered. Please contact 8606178119.");
-          if (attSnap.exists()) throw new Error("You have already marked attendance today!");
 
           const member = memberSnap.data();
           const daysLeft = Math.round(
@@ -88,22 +112,114 @@
           if (daysLeft < 0) feeStatus = "EXPIRED";
           else if (daysLeft <= 5) feeStatus = "DUE_SOON";
 
-          tx.update(tokenRef, { used: true, usedBy: member.name, feeStatus, daysLeft, validUntil: member.validUntil });
-          tx.set(attRef, { date: today, time: istTime, phone, name: member.name, feeStatus, tokenUsed: token });
+          let closedPreviousDates = [];
+          staleSnaps.forEach((sSnap, idx) => {
+            if (sSnap.exists() && sSnap.data().status === "IN") {
+              const prevData = sSnap.data();
+              closedPreviousDates.push(prevData.date);
+              tx.update(staleRefs[idx], {
+                status: "AUTO_CLOSED",
+                exitTime: prevData.exitTime || "Forgot Exit",
+                autoClosedOn: today,
+                lastTokenUsed: token
+              });
+            }
+          });
 
-          return { name: member.name, validUntil: member.validUntil, feeStatus, daysLeft };
+          // If today's check-in already exists: mark EXIT on first exit scan
+          if (todayAttSnap.exists()) {
+            const attData = todayAttSnap.data();
+            if (attData.exitTime) {
+              throw new Error(`Exit already marked today at ${attData.exitTime}.`);
+            }
+            const duration = formatDuration(attData.entryAt || nowMs, nowMs);
+            tx.update(todayAttRef, {
+              exitTime: istTime,
+              exitAt: nowMs,
+              status: "OUT",
+              duration: duration || "",
+              lastTokenUsed: token
+            });
+            tx.update(tokenRef, {
+              used: true,
+              actionType: "EXIT",
+              usedBy: member.name,
+              scanTime: istTime,
+              duration,
+              feeStatus,
+              daysLeft,
+              validUntil: member.validUntil
+            });
+            return {
+              mode: "EXIT",
+              name: member.name,
+              entryTime: attData.time || attData.entryTime || "",
+              exitTime: istTime,
+              duration,
+              validUntil: member.validUntil,
+              feeStatus,
+              daysLeft,
+              closedPreviousDates
+            };
+          }
+
+          // Otherwise mark today's ENTRY
+          tx.set(todayAttRef, {
+            date: today,
+            time: istTime,
+            entryTime: istTime,
+            entryAt: nowMs,
+            exitTime: "",
+            exitAt: null,
+            status: "IN",
+            phone,
+            name: member.name,
+            feeStatus,
+            tokenUsed: token,
+            lastTokenUsed: token
+          });
+
+          tx.update(tokenRef, {
+            used: true,
+            actionType: "ENTRY",
+            usedBy: member.name,
+            scanTime: istTime,
+            feeStatus,
+            daysLeft,
+            validUntil: member.validUntil
+          });
+
+          return {
+            mode: "ENTRY",
+            name: member.name,
+            entryTime: istTime,
+            validUntil: member.validUntil,
+            feeStatus,
+            daysLeft,
+            closedPreviousDates
+          };
         });
 
         localStorage.setItem("gym_phone", phone);
         resetBtn.style.display = "block";
 
+        const autoNote = res.closedPreviousDates.length
+          ? `<br><span style="font-size:0.84rem; opacity:0.9;">(Closed previous open check-in from ${res.closedPreviousDates.join(", ")})</span>`
+          : "";
+
+        if (res.mode === "EXIT") {
+          const durText = res.duration ? `<br>Duration: <b>${res.duration}</b>` : "";
+          showMsg("out", `👋 Bye, <b>${res.name}</b>!<br><br>Entry: <b>${res.entryTime || "—"}</b> • Exit: <b>${res.exitTime}</b>${durText}${autoNote}`);
+          return;
+        }
+
         if (res.feeStatus === "EXPIRED") {
-          showMsg("warning", `✅ Attendance Marked for <b>${res.name}</b><br><br>⚠️ <b>Fee Expired on ${res.validUntil}</b>.<br>Please renew your membership at reception.`);
+          showMsg("warning", `✅ Entry Marked for <b>${res.name}</b> at <b>${res.entryTime}</b>${autoNote}<br><br>⚠️ <b>Fee Expired on ${res.validUntil}</b>.<br>Please renew your membership at reception.`);
         } else if (res.feeStatus === "DUE_SOON") {
           const dueText = res.daysLeft === 0 ? "expires <b>today</b>" : `expires in <b>${res.daysLeft} day${res.daysLeft === 1 ? "" : "s"}</b>`;
-          showMsg("soon", `✅ Welcome, <b>${res.name}</b>!<br><br>⏳ Reminder: Your plan ${dueText} (<b>${res.validUntil}</b>).<br>Please renew soon at reception.`);
+          showMsg("soon", `✅ Welcome, <b>${res.name}</b>! (Entry: <b>${res.entryTime}</b>)${autoNote}<br><br>⏳ Reminder: Your plan ${dueText} (<b>${res.validUntil}</b>).<br>Please renew soon at reception.`);
         } else {
-          showMsg("success", `✅ Welcome, <b>${res.name}</b>!<br><br>Attendance marked.<br>Plan valid until: <b>${res.validUntil}</b>`);
+          showMsg("success", `✅ Welcome, <b>${res.name}</b>! (Entry: <b>${res.entryTime}</b>)${autoNote}<br><br>Plan valid until: <b>${res.validUntil}</b>`);
         }
       } catch (err) {
         formArea.style.display = "block";
@@ -111,7 +227,7 @@
       }
     }
 
-    document.getElementById("submit-btn").onclick = () => markAttendance(phoneInput.value.trim());
+    document.getElementById("submit-btn").onclick = () => processScan(phoneInput.value.trim());
 
     resetBtn.onclick = () => {
       localStorage.removeItem("gym_phone");
@@ -122,7 +238,7 @@
     if (savedPhone) {
       phoneInput.value = savedPhone;
       resetBtn.style.display = "block";
-      markAttendance(savedPhone);
+      processScan(savedPhone);
     }
   </script>
 </body>
