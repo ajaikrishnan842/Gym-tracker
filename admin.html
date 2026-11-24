@@ -212,7 +212,7 @@
       try {
         await signInWithEmailAndPassword(auth, document.getElementById("email-input").value.trim(), document.getElementById("pass-input").value);
       } catch {
-        loginErr.textContent = "Invalid email or password.";
+        loginErr.textContent = err.code + ": " + err.message;
       }
     };
 
