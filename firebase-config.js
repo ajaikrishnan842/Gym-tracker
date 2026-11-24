@@ -4,12 +4,12 @@ import { getAuth } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-auth
 
 // Replace with your Firebase project config
 const firebaseConfig = {
-  apiKey: "PASTE_YOUR_API_KEY",
-  authDomain: "PASTE_YOUR_AUTH_DOMAIN",
-  projectId: "PASTE_YOUR_PROJECT_ID",
-  storageBucket: "PASTE_YOUR_STORAGE_BUCKET",
-  messagingSenderId: "PASTE_YOUR_SENDER_ID",
-  appId: "PASTE_YOUR_APP_ID"
+  apiKey: "AIzaSyCYhicBe_rx8sFZVLUItMDQZSKauCqSQwQ",
+  authDomain: "gym-tracker-6d283.firebaseapp.com",
+  projectId: "gym-tracker-6d283",
+  storageBucket: "gym-tracker-6d283.firebasestorage.app",
+  messagingSenderId: "80401381162",
+  appId: "1:80401381162:web:6f3a0ab72e13eb9a341053"
 };
 
 const app = initializeApp(firebaseConfig);
