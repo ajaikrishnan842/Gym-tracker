@@ -25,6 +25,7 @@
     button.danger { background: #dc2626; }
     button.outline { background: #fff; color: #334155; border: 1px solid #cbd5e1; }
     button.outline.selected { background: #0f172a; color: #fff; border-color: #0f172a; }
+    button.export-btn { background: #0f172a; color: #fff; padding: 6px 12px; font-size: 0.85rem; }
     table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 0.88rem; }
     th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid #e2e8f0; }
     .badge { padding: 3px 8px; border-radius: 99px; font-size: 0.76rem; font-weight: 600; white-space: nowrap; }
@@ -74,7 +75,10 @@
     <div class="card">
       <div class="toolbar">
         <h3 style="margin:0;">Monthly Revenue</h3>
-        <input id="rev-month" type="month" style="padding:6px 10px;" />
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <input id="rev-month" type="month" style="padding:6px 10px;" />
+          <button id="export-rev-btn" class="export-btn">Export CSV</button>
+        </div>
       </div>
       <div class="stats-grid">
         <div class="stat-box total">
@@ -112,11 +116,12 @@
     <div class="card">
       <div class="toolbar">
         <h3 style="margin:0;">Members & Plans</h3>
-        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
           <button id="filter-all" class="outline selected" style="padding:6px 12px; font-size:0.85rem;">All</button>
           <button id="filter-due" class="outline" style="padding:6px 12px; font-size:0.85rem;">Due / Overdue</button>
           <button id="filter-student" class="outline" style="padding:6px 12px; font-size:0.85rem;">Students</button>
-          <input id="search" placeholder="Search name or mobile..." style="padding:6px 10px; width:190px;" />
+          <input id="search" placeholder="Search name or mobile..." style="padding:6px 10px; width:180px;" />
+          <button id="export-members-btn" class="export-btn">Export CSV</button>
         </div>
       </div>
       <div style="overflow-x:auto;">
@@ -131,7 +136,10 @@
     <div class="card">
       <div class="toolbar">
         <h3 style="margin:0;">Attendance (<span id="att-count">0</span>)</h3>
-        <input id="att-date" type="date" style="padding:6px 10px;" />
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <input id="att-date" type="date" style="padding:6px 10px;" />
+          <button id="export-att-btn" class="export-btn">Export CSV</button>
+        </div>
       </div>
       <div style="overflow-x:auto;">
         <table>
@@ -245,9 +253,54 @@
 
     let unsubMembers = null, unsubAtt = null, unsubPayments = null, unsubRev = null;
     let allMembers = [];
+    let currentMonthPayments = [];
+    let currentDayAttendance = [];
     let filterMode = "all";
     let selectedMember = null;
     let compressedPhotoBase64 = "";
+
+    // CSV Download Helper
+    function downloadCSV(filename, headers, rows) {
+      const esc = (v) => {
+        const s = String(v ?? "");
+        return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      };
+      const csv = [headers.map(esc).join(","), ...rows.map(r => r.map(esc).join(","))].join("\n");
+      const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    document.getElementById("export-rev-btn").onclick = () => {
+      if (!currentMonthPayments.length) return alert("No payments found for this month.");
+      downloadCSV(
+        `payments-${revMonthInput.value}.csv`,
+        ["Date", "Name", "Mobile", "Amount (INR)", "Plan", "Mode", "Transaction ID", "Valid Until"],
+        currentMonthPayments.map(p => [p.date, p.name, p.phone, p.amount, p.planName || "", p.mode, p.txnId, p.validUntil])
+      );
+    };
+
+    document.getElementById("export-members-btn").onclick = () => {
+      if (!allMembers.length) return alert("No members to export.");
+      downloadCSV(
+        `members-${getTodayIST()}.csv`,
+        ["Name", "Mobile", "Plan", "Student", "Last Fee (INR)", "Last Paid", "Valid Until"],
+        allMembers.map(m => [m.name, m.phone, m.planName || "1 Month", m.isStudent ? "Yes" : "No", m.lastFee || 0, m.lastPaid || "", m.validUntil])
+      );
+    };
+
+    document.getElementById("export-att-btn").onclick = () => {
+      if (!currentDayAttendance.length) return alert("No attendance records for this date.");
+      downloadCSV(
+        `attendance-${attDateInput.value}.csv`,
+        ["Date", "Time", "Name", "Mobile", "Fee Status", "Method"],
+        currentDayAttendance.map(a => [a.date, a.time, a.name, a.phone, a.feeStatus, a.tokenUsed === "MANUAL" ? "Manual" : "QR"])
+      );
+    };
 
     document.getElementById("login-btn").onclick = async () => {
       loginErr.textContent = "";
@@ -494,8 +547,8 @@
       );
       unsubRev = onSnapshot(q, (snap) => {
         let total = 0, upi = 0, cash = 0;
-        snap.docs.forEach(d => {
-          const p = d.data();
+        currentMonthPayments = snap.docs.map(d => d.data());
+        currentMonthPayments.forEach(p => {
           const amt = Number(p.amount) || 0;
           total += amt;
           if (p.mode === "Cash") cash += amt;
@@ -514,12 +567,13 @@
       unsubAtt = onSnapshot(q, (snap) => {
         const tbody = document.getElementById("att-list");
         document.getElementById("att-count").textContent = snap.size;
+        currentDayAttendance = snap.docs.map(d => d.data());
         tbody.innerHTML = "";
         if (snap.empty) {
           tbody.innerHTML = `<tr><td colspan="4" style="color:#94a3b8; text-align:center;">No check-ins on ${dateStr}</td></tr>`;
           return;
         }
-        snap.docs.map(d => d.data()).forEach(a => {
+        currentDayAttendance.forEach(a => {
           tbody.innerHTML += `
             <tr>
               <td>${a.time}</td>
