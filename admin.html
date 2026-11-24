@@ -21,10 +21,13 @@
     .stat-val { font-size: 1.4rem; font-weight: 700; margin-top: 4px; color: #0f172a; }
     .stat-box.total { background: #eff6ff; border-color: #bfdbfe; }
     .stat-box.total .stat-val { color: #1d4ed8; }
+    .stat-box.floor { background: #f0fdf4; border-color: #bbf7d0; }
+    .stat-box.floor .stat-val { color: #15803d; }
     input, select, button { padding: 10px 12px; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 0.92rem; }
     button { background: #2563eb; color: #fff; border: none; cursor: pointer; font-weight: 600; }
     button.green { background: #16a34a; }
     button.purple { background: #7c3aed; }
+    button.amber { background: #d97706; }
     button.gray { background: #475569; }
     button.danger { background: #dc2626; }
     button.outline { background: #fff; color: #334155; border: 1px solid #cbd5e1; }
@@ -50,6 +53,7 @@
     .field label { display: block; font-size: 0.82rem; font-weight: 600; color: #475569; margin-bottom: 4px; }
     .field input, .field select { width: 100%; }
     .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .freeze-box { background: #fffbeb; border: 1px solid #fde68a; border-radius: 12px; padding: 12px; margin-top: 14px; }
     .preview-box { background: #f0fdf4; border: 1px solid #86efac; color: #166534; padding: 10px 12px; border-radius: 8px; font-size: 0.88rem; margin-bottom: 12px; }
     #photo-preview { max-width: 100%; max-height: 180px; border-radius: 8px; margin-top: 8px; display: none; border: 1px solid #e2e8f0; }
     .wt-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 14px; }
@@ -148,7 +152,7 @@
       </div>
     </div>
 
-    <!-- Add New Member (Includes DOB, Height & Starting Weight) -->
+    <!-- Add New Member -->
     <div class="card">
       <h3>Add New Member</h3>
       <div class="grid">
@@ -183,13 +187,27 @@
       </div>
     </div>
 
-    <!-- Attendance with Entry / Exit & Date Picker -->
+    <!-- Attendance with Live Floor Counter, Entry / Exit & Date Picker -->
     <div class="card">
       <div class="toolbar">
         <h3 style="margin:0;">Attendance (<span id="att-count">0</span>)</h3>
         <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
           <input id="att-date" type="date" style="padding:6px 10px;" />
           <button id="export-att-btn" class="export-btn">Export CSV</button>
+        </div>
+      </div>
+      <div class="stats-grid" style="margin-bottom:10px;">
+        <div class="stat-box floor">
+          <div class="stat-label">Currently Inside</div>
+          <div class="stat-val" id="floor-inside-count">0</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Total Check-Ins</div>
+          <div class="stat-val" id="floor-total-count">0</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Checked Out</div>
+          <div class="stat-val" id="floor-out-count">0</div>
         </div>
       </div>
       <div style="overflow-x:auto;">
@@ -328,7 +346,7 @@
     </div>
   </div>
 
-  <!-- Edit / Delete Member Modal -->
+  <!-- Edit / Freeze / Delete Member Modal -->
   <div id="edit-modal" class="modal-bg">
     <div class="modal">
       <h3 style="margin-bottom:4px;">Edit Member</h3>
@@ -366,9 +384,26 @@
         </div>
       </div>
 
-      <div style="display:flex; gap:10px; margin-top:16px;">
+      <div style="display:flex; gap:10px; margin-top:12px;">
         <button id="save-edit-btn" style="flex:1;">Save Changes</button>
         <button id="close-edit-btn" class="gray">Cancel</button>
+      </div>
+
+      <!-- Membership Freeze / Hold Days -->
+      <div class="freeze-box">
+        <div style="font-size:0.82rem; font-weight:700; color:#92400e; margin-bottom:8px;">⏸ Membership Freeze / Hold Days</div>
+        <div class="field-row" style="margin-bottom:8px;">
+          <div class="field" style="margin-bottom:0;">
+            <label>Hold Days (+N)</label>
+            <input id="freeze-days" type="number" min="1" max="365" value="7" />
+          </div>
+          <div class="field" style="margin-bottom:0;">
+            <label>Reason (Travel / Medical)</label>
+            <input id="freeze-reason" placeholder="e.g. Out of station" />
+          </div>
+        </div>
+        <button id="apply-freeze-btn" class="amber" style="width:100%;">Apply Hold & Extend Expiry</button>
+        <div id="freeze-history-note" style="font-size:0.78rem; color:#78350f; margin-top:8px;"></div>
       </div>
 
       <hr style="border:none; border-top:1px solid #e2e8f0; margin:18px 0 12px;" />
@@ -662,18 +697,21 @@
       if (!allMembers.length) return alert("No members to export.");
       downloadCSV(
         `members-${getTodayIST()}.csv`,
-        ["Name", "Mobile", "DOB", "Height (cm)", "Start Weight (kg)", "Current Weight (kg)", "Weight Change (kg)", "BMI", "Plan", "Student", "Last Fee (INR)", "Last Paid", "Valid Until"],
+        ["Name", "Mobile", "DOB", "Height (cm)", "Start Weight (kg)", "Current Weight (kg)", "Weight Change (kg)", "BMI", "Plan", "Student", "Frozen Days Total", "Last Fee (INR)", "Last Paid", "Valid Until"],
         allMembers.map(m => {
           const hist = getMemberWeightHistory(m);
           const startW = hist.length ? hist[0].weight : (m.initialWeight || "");
           const currW = hist.length ? hist[hist.length - 1].weight : (m.currentWeight || startW);
           const diffW = (startW !== "" && currW !== "") ? (Number(currW) - Number(startW)).toFixed(1) : "";
           const bmi = calcBMI(currW, m.height) || "";
+          const frozenTotal = Array.isArray(m.freezeHistory)
+            ? m.freezeHistory.reduce((sum, f) => sum + (Number(f.days) || 0), 0)
+            : 0;
           return [
             m.name, m.phone, m.dob || "", m.height || "",
             startW, currW, diffW, bmi,
             m.planName || "1 Month", m.isStudent ? "Yes" : "No",
-            m.lastFee || 0, m.lastPaid || "", m.validUntil
+            frozenTotal, m.lastFee || 0, m.lastPaid || "", m.validUntil
           ];
         })
       );
@@ -798,7 +836,6 @@
 
     payMode.onchange = () => { txnField.style.display = payMode.value === "Cash" ? "none" : "block"; };
 
-    // Add New Member with DOB, Height & Starting Weight
     document.getElementById("add-btn").onclick = async () => {
       const name = document.getElementById("m-name").value.trim();
       const phone = document.getElementById("m-phone").value.trim();
@@ -824,6 +861,7 @@
         initialWeight: weight,
         currentWeight: weight,
         weightHistory,
+        freezeHistory: [],
         joinedDate: today,
         planId: plan.id, planName: plan.name, planDays: plan.days,
         isStudent: Boolean(plan.isStudent), lastFee: fee, lastPaid: today,
@@ -839,7 +877,6 @@
       document.getElementById("m-weight").value = "";
     };
 
-    // Weight & Progress Tracker Modal
     function renderWeightModal() {
       const m = allMembers.find(item => item.phone === weightMemberPhone);
       if (!m) return;
@@ -953,7 +990,19 @@
       });
     };
 
-    // Edit / Delete Member Modal
+    function renderFreezeNote(m) {
+      const noteEl = document.getElementById("freeze-history-note");
+      const list = Array.isArray(m.freezeHistory) ? m.freezeHistory : [];
+      if (!list.length) {
+        noteEl.textContent = "No freeze/hold days applied yet.";
+        return;
+      }
+      const totalDays = list.reduce((acc, f) => acc + (Number(f.days) || 0), 0);
+      const last = list[list.length - 1];
+      noteEl.innerHTML = `Total held: <b>+${totalDays}d</b> across ${list.length} hold(s). Last: <b>+${last.days}d</b> on ${last.date}${last.reason ? ` (${last.reason})` : ""}.`;
+    }
+
+    // Edit / Freeze / Delete Member Modal
     window.openEditModal = (phone) => {
       editingMember = allMembers.find(m => m.phone === phone);
       if (!editingMember) return;
@@ -966,6 +1015,9 @@
         : (allPlans[0]?.id || "reg_1m");
       document.getElementById("edit-fee").value = editingMember.lastFee || getPlanById(editPlan.value).fee;
       document.getElementById("edit-valid").value = editingMember.validUntil;
+      document.getElementById("freeze-days").value = "7";
+      document.getElementById("freeze-reason").value = "";
+      renderFreezeNote(editingMember);
       editModal.style.display = "flex";
     };
 
@@ -987,6 +1039,38 @@
         isStudent: Boolean(plan.isStudent), lastFee: fee, validUntil
       });
       editModal.style.display = "none";
+    };
+
+    document.getElementById("apply-freeze-btn").onclick = async () => {
+      if (!editingMember) return;
+      const holdDays = Number(document.getElementById("freeze-days").value);
+      const reason = document.getElementById("freeze-reason").value.trim() || "Hold / Pause";
+      if (!holdDays || holdDays < 1 || holdDays > 365) {
+        return alert("Enter hold days between 1 and 365.");
+      }
+
+      const today = getTodayIST();
+      const currentExpiry = document.getElementById("edit-valid").value || editingMember.validUntil || today;
+      const baseDate = currentExpiry >= today ? currentExpiry : today;
+      const nextValid = addDays(baseDate, holdDays);
+
+      const prevHistory = Array.isArray(editingMember.freezeHistory) ? editingMember.freezeHistory : [];
+      const nextHistory = [
+        ...prevHistory,
+        { date: today, days: holdDays, reason, newValidUntil: nextValid }
+      ];
+
+      await updateDoc(doc(db, "members", editingMember.phone), {
+        validUntil: nextValid,
+        freezeHistory: nextHistory,
+        lastFreezeReason: reason
+      });
+
+      document.getElementById("edit-valid").value = nextValid;
+      document.getElementById("freeze-reason").value = "";
+      editingMember = { ...editingMember, validUntil: nextValid, freezeHistory: nextHistory };
+      renderFreezeNote(editingMember);
+      alert(`Extended ${editingMember.name}'s validity by +${holdDays} days to ${nextValid}.`);
     };
 
     document.getElementById("delete-member-btn").onclick = async () => {
@@ -1074,8 +1158,9 @@
       const istTime = new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" });
       await setDoc(doc(db, "attendance", `${today}_${phone}`), {
         date: today, time: istTime, entryTime: istTime, entryAt: Date.now(),
-        exitTime: "", exitAt: null, status: "IN", phone, name,
-        feeStatus: today > validUntil ? "EXPIRED" : "ACTIVE", tokenUsed: "MANUAL"
+        exitTime: "", exitAt: null, status: "IN",
+        sessions: [{ sessionNum: 1, entryTime: istTime, entryAt: Date.now(), exitTime: "", exitAt: null, duration: "", status: "IN" }],
+        phone, name, feeStatus: today > validUntil ? "EXPIRED" : "ACTIVE", tokenUsed: "MANUAL"
       });
     };
 
@@ -1149,6 +1234,10 @@
           else if (diffDays <= 5) badge = `<span class="badge soon">Due in ${diffDays}d</span>`;
 
           const studentBadge = m.isStudent ? `<span class="student-tag">Student</span>` : "";
+          const frozenTotal = Array.isArray(m.freezeHistory)
+            ? m.freezeHistory.reduce((sum, f) => sum + (Number(f.days) || 0), 0)
+            : 0;
+          const freezeTag = frozenTotal > 0 ? `<br><span style="color:#b45309; font-size:0.75rem; font-weight:600;">Held: +${frozenTotal}d</span>` : "";
 
           const hist = getMemberWeightHistory(m);
           const currW = hist.length ? hist[hist.length - 1].weight : null;
@@ -1173,7 +1262,7 @@
             <tr>
               <td><b>${m.name}</b>${studentBadge}<br><span style="color:#64748b; font-size:0.78rem;">${metaLine}</span></td>
               <td>${m.planName || "1 Month"}<br><span style="color:#64748b; font-size:0.78rem;">₹${m.lastFee || 1000}</span></td>
-              <td>${m.validUntil}</td>
+              <td>${m.validUntil}${freezeTag}</td>
               <td>${badge}</td>
               <td class="actions">
                 <button class="green" onclick="openPayModal('${m.phone}')">Record Fee</button>
@@ -1210,6 +1299,11 @@
       });
     }
 
+    function isSessionOpenInside(a) {
+      const sess = getNormalizedSessions(a);
+      return sess.some(s => s.status === "IN" && !s.exitTime);
+    }
+
     function listenAttendance(dateStr) {
       if (unsubAtt) unsubAtt();
       const q = query(collection(db, "attendance"), where("date", "==", dateStr));
@@ -1217,6 +1311,18 @@
         const tbody = document.getElementById("att-list");
         document.getElementById("att-count").textContent = snap.size;
         currentDayAttendance = snap.docs.map(d => d.data()).sort((a, b) => (a.entryAt || 0) - (b.entryAt || 0));
+
+        let insideCount = 0;
+        let outCount = 0;
+        currentDayAttendance.forEach(a => {
+          if (isSessionOpenInside(a)) insideCount++;
+          else outCount++;
+        });
+
+        document.getElementById("floor-inside-count").textContent = insideCount;
+        document.getElementById("floor-total-count").textContent = currentDayAttendance.length;
+        document.getElementById("floor-out-count").textContent = outCount;
+
         tbody.innerHTML = "";
         if (snap.empty) {
           tbody.innerHTML = `<tr><td colspan="4" style="color:#94a3b8; text-align:center;">No check-ins on ${dateStr}</td></tr>`;
