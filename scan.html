@@ -3,11 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Member Check-In</title>
+  <title>Fitness Planet Gym — Check-In</title>
   <style>
     * { box-sizing: border-box; font-family: system-ui, -apple-system, sans-serif; }
     body { margin: 0; background: #f1f5f9; color: #0f172a; display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
     .box { background: #fff; padding: 28px; border-radius: 16px; width: 100%; max-width: 380px; box-shadow: 0 10px 25px rgba(0,0,0,0.08); text-align: center; }
+    .gym-logo { width: 72px; height: 72px; object-fit: cover; border-radius: 14px; margin-bottom: 10px; }
+    .gym-meta { margin: 0 0 16px; color: #64748b; font-size: 0.85rem; }
     input { width: 100%; padding: 14px; font-size: 1.1rem; border: 1.5px solid #cbd5e1; border-radius: 10px; margin: 12px 0; text-align: center; }
     button { width: 100%; padding: 14px; font-size: 1rem; font-weight: 600; background: #2563eb; color: #fff; border: none; border-radius: 10px; cursor: pointer; }
     .status { padding: 16px; border-radius: 12px; margin-top: 16px; font-weight: 500; line-height: 1.45; }
@@ -20,9 +22,11 @@
 </head>
 <body>
   <div class="box">
-    <h2 style="margin-top:0;">Gym Check-In</h2>
+    <img src="logo.png" alt="Fitness Planet Gym" class="gym-logo" onerror="this.style.display='none'" />
+    <h2 style="margin:0 0 4px;">Fitness Planet Gym</h2>
+    <p class="gym-meta">Periye • 📞 8606178119</p>
     <div id="form-area">
-      <p style="color:#475569; margin:0;">Enter your registered 10-digit mobile number (saved for future visits):</p>
+      <p style="color:#475569; margin:0; font-size:0.92rem;">Enter your registered 10-digit mobile number (saved for future visits):</p>
       <input id="phone" type="tel" maxlength="10" placeholder="9876543210" />
       <button id="submit-btn">Mark Attendance</button>
     </div>
@@ -72,7 +76,7 @@
 
           if (tData.token !== token) throw new Error("QR expired. Please scan the fresh QR on screen.");
           if (tData.used) throw new Error("This QR was already used. Scan the fresh QR on screen.");
-          if (!memberSnap.exists()) throw new Error("Mobile number not registered. Please ask reception.");
+          if (!memberSnap.exists()) throw new Error("Mobile number not registered. Please contact 8606178119.");
           if (attSnap.exists()) throw new Error("You have already marked attendance today!");
 
           const member = memberSnap.data();
