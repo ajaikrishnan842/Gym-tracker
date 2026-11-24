@@ -3,34 +3,37 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Gym Check-In Kiosk</title>
+  <title>Fitness Planet Gym — Check-In Kiosk</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
   <style>
     * { box-sizing: border-box; font-family: system-ui, -apple-system, sans-serif; }
     body { margin: 0; background: #0f172a; color: #f8fafc; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; text-align: center; }
-    .card { background: #1e293b; padding: 32px; border-radius: 20px; width: 100%; max-width: 400px; box-shadow: 0 20px 40px rgba(0,0,0,0.4); }
-    h1, h2 { margin: 0 0 6px; }
-    h1 { font-size: 1.6rem; }
-    p.sub { margin: 0 0 24px; color: #94a3b8; font-size: 0.95rem; }
+    .card { background: #1e293b; padding: 28px 32px; border-radius: 20px; width: 100%; max-width: 420px; box-shadow: 0 20px 40px rgba(0,0,0,0.4); }
+    .gym-logo { width: 96px; height: 96px; object-fit: cover; border-radius: 16px; margin-bottom: 12px; border: 2px solid #334155; }
+    h1, h2 { margin: 0 0 4px; }
+    h1 { font-size: 1.55rem; letter-spacing: 0.01em; }
+    .gym-meta { margin: 0 0 18px; color: #94a3b8; font-size: 0.9rem; font-weight: 500; }
+    p.sub { margin: 0 0 18px; color: #cbd5e1; font-size: 0.92rem; }
     input { width: 100%; padding: 12px; margin-bottom: 10px; border-radius: 10px; border: 1px solid #334155; background: #0f172a; color: #fff; font-size: 0.95rem; }
     button { width: 100%; padding: 12px; border-radius: 10px; border: none; background: #2563eb; color: #fff; font-size: 1rem; font-weight: 600; cursor: pointer; }
     #login-err { color: #f87171; font-size: 0.85rem; margin-top: 10px; min-height: 18px; }
-    #qr-box { background: #fff; padding: 18px; border-radius: 16px; display: inline-block; margin-bottom: 20px; }
+    #qr-box { background: #fff; padding: 18px; border-radius: 16px; display: inline-block; margin-bottom: 18px; }
     .bar-bg { width: 100%; height: 10px; background: #334155; border-radius: 99px; overflow: hidden; margin-bottom: 10px; }
     #bar { height: 100%; width: 100%; background: #22c55e; transition: width 1s linear; }
-    #timer { font-size: 1.1rem; font-weight: 600; color: #cbd5e1; }
+    #timer { font-size: 1.05rem; font-weight: 600; color: #cbd5e1; }
     #overlay { display: none; padding: 28px 16px; border-radius: 16px; margin-bottom: 12px; }
     .ok { background: #14532d; border: 2px solid #22c55e; }
     .soon { background: #713f12; border: 2px solid #eab308; }
     .warn { background: #7f1d1d; border: 2px solid #ef4444; }
-    .footer-links { margin-top: 24px; display: flex; gap: 18px; align-items: center; }
+    .footer-links { margin-top: 22px; display: flex; gap: 18px; align-items: center; }
     .footer-links a, .footer-links button { background: none; color: #64748b; text-decoration: none; font-size: 0.85rem; padding: 0; width: auto; font-weight: 500; }
   </style>
 </head>
 <body>
   <div id="login-card" class="card">
-    <h2>Kiosk Login</h2>
-    <p class="sub">Sign in with your gym owner account</p>
+    <img src="logo.png" alt="Fitness Planet Gym" class="gym-logo" onerror="this.style.display='none'" />
+    <h2>Fitness Planet Gym</h2>
+    <p class="gym-meta">Periye • 📞 8606178119</p>
     <input id="email" type="email" placeholder="Owner Email" />
     <input id="password" type="password" placeholder="Password" />
     <button id="login-btn">Start Kiosk</button>
@@ -38,8 +41,10 @@
   </div>
 
   <div id="kiosk-card" class="card" style="display:none;">
-    <h1>Gym Attendance</h1>
-    <p class="sub">Scan with your phone camera to check in</p>
+    <img src="logo.png" alt="Fitness Planet Gym" class="gym-logo" onerror="this.style.display='none'" />
+    <h1>Fitness Planet Gym</h1>
+    <p class="gym-meta">Periye • 📞 8606178119</p>
+    <p class="sub">Scan with your phone camera to mark attendance</p>
 
     <div id="overlay"></div>
 
@@ -141,8 +146,8 @@
       loginErr.textContent = "";
       try {
         await signInWithEmailAndPassword(auth, document.getElementById("email").value.trim(), document.getElementById("password").value);
-      } catch {
-        loginErr.textContent = "Invalid email or password.";
+      } catch (err) {
+        loginErr.textContent = err.code + ": " + err.message;
       }
     };
 
