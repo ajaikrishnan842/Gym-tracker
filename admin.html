@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Gym Admin Dashboard</title>
+  <title>Fitness Planet Gym - Admin</title>
   <style>
     * { box-sizing: border-box; font-family: system-ui, -apple-system, sans-serif; }
     body { margin: 0; background: #f8fafc; color: #0f172a; padding: 20px; max-width: 1050px; margin: auto; }
@@ -432,7 +432,7 @@
     window.sendReminder = async (phone, name, fee, validUntil, isOverdue) => {
       const today = getTodayIST();
       const text = encodeURIComponent(
-        `Hi ${name}, reminder that your gym fee (₹${fee || 1000}) ${isOverdue ? "expired" : "is due"} on ${validUntil}. Please renew via UPI or Cash at reception. Thank you!`
+        `Hi ${name}, reminder from Fitness Planet Gym, Periye your gym fee (₹${fee || 1000}) ${isOverdue ? "expired" : "is due"} on ${validUntil}. Please renew via UPI or Cash at reception. Thank you!`
       );
       window.open(`https://wa.me/91${phone}?text=${text}`, "_blank");
       await updateDoc(doc(db, "members", phone), { lastReminded: today });
